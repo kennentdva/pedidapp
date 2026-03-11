@@ -7,6 +7,7 @@ import Despacho from './pages/Despacho';
 import Cuentas from './pages/Cuentas';
 import Diario from './pages/Diario';
 import Estadisticas from './pages/Estadisticas';
+import Directorio from './pages/Directorio';
 import Login from './pages/Login';
 import { useOrderStore } from './store/orderStore';
 
@@ -43,6 +44,7 @@ function App() {
           <Route path="cuentas" element={<Cuentas />} />
           <Route path="diario" element={<Diario />} />
           <Route path="estadisticas" element={<Estadisticas />} />
+          <Route path="directorio" element={<Directorio />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

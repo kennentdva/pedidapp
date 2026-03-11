@@ -5,6 +5,7 @@ export type Cliente = {
   id: string;
   nombre: string;
   es_frecuente: boolean;
+  telefono?: string;
 };
 
 export type PedidoDetalle = {

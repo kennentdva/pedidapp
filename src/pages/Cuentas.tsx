@@ -453,7 +453,16 @@ export default function Cuentas() {
   const enviarWhatsApp = () => {
     const texto = generarReporteText();
     if (texto) {
-       const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+       let baseUrl = 'https://wa.me/';
+       if (selectedCliente?.telefono) {
+           const numeroLimpio = selectedCliente.telefono.replace(/\D/g, '');
+           if (numeroLimpio.length === 10) {
+               baseUrl = `https://wa.me/57${numeroLimpio}`;
+           } else {
+               baseUrl = `https://wa.me/${numeroLimpio}`;
+           }
+       }
+       const url = `${baseUrl}?text=${encodeURIComponent(texto)}`;
        window.open(url, '_blank');
     }
   };
