@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Book } from 'lucide-react';
+import { Book, Calculator, DollarSign, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { type Pedido } from '../store/orderStore';
 
 export default function Diario() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [ingresosEfectivoHoy, setIngresosEfectivoHoy] = useState(0);
+  const [dineroContado, setDineroContado] = useState<number | string>('');
   const [loading, setLoading] = useState(true);
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
 
@@ -18,14 +20,34 @@ export default function Diario() {
 
   const fetchTodosLosPedidos = async () => {
     setLoading(true);
-    const { data } = await supabase
+    
+    // Obtener pedidos
+    const { data: dataPedidos } = await supabase
       .from('pedidos')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (data) setPedidos(data as Pedido[]);
+    if (dataPedidos) setPedidos(dataPedidos as Pedido[]);
+
+    // Obtener abonos/pagos de HOY en Efectivo para el Arqueo
+    const hoyStr = new Date().toISOString().split('T')[0];
+    const { data: pagosHoy } = await supabase
+      .from('pagos')
+      .select('monto, metodo, fecha')
+      .gte('fecha', `${hoyStr}T00:00:00`)
+      .lte('fecha', `${hoyStr}T23:59:59`);
+
+    if (pagosHoy) {
+      const efectivo = pagosHoy
+        .filter(p => typeof p.metodo === 'string' && p.metodo.includes('Efectivo'))
+        .reduce((sum, p) => sum + p.monto, 0);
+      setIngresosEfectivoHoy(efectivo);
+    }
+
     setLoading(false);
   };
+
+  const diferenciaArqueo = (Number(dineroContado) || 0) - ingresosEfectivoHoy;
 
   // Agrupar pedidos por fecha corta (YYYY-MM-DD)
   const grupos = pedidos.reduce((acc: Record<string, Pedido[]>, p) => {
@@ -61,7 +83,74 @@ export default function Diario() {
           <div className="w-12 h-12 rounded-full border-2 border-orange-500/20 border-t-orange-500 animate-spin"></div>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-6">
+          
+          {/* Tarjeta de Arqueo de Caja */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden group">
+             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
+                <Calculator size={120} />
+             </div>
+             
+             <div className="relative z-10">
+                <h3 className="text-xl font-black text-white mb-2 flex items-center gap-2">
+                   <Calculator className="text-blue-500" /> Arqueo de Caja Diario
+                </h3>
+                <p className="text-neutral-400 text-sm mb-6">Calcula si el dinero en efectivo de hoy te cuadra con el sistema.</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                   
+                   <div className="bg-neutral-950 rounded-2xl p-4 border border-neutral-800">
+                      <p className="text-[10px] uppercase font-bold text-neutral-500 tracking-widest mb-1">Efectivo Esperado (Sistema)</p>
+                      <p className="text-2xl font-black text-white font-mono">${ingresosEfectivoHoy.toLocaleString()}</p>
+                   </div>
+                   
+                   <div className="bg-blue-950/20 rounded-2xl p-4 border border-blue-900/50">
+                      <p className="text-[10px] uppercase font-bold text-blue-400 tracking-widest mb-1">Dinero Físico (Billetes)</p>
+                      <div className="flex items-center">
+                         <DollarSign size={16} className="text-blue-500 mr-1" />
+                         <input 
+                            type="number" 
+                            className="bg-transparent text-2xl font-black text-white font-mono outline-none w-full"
+                            placeholder="0"
+                            value={dineroContado}
+                            onChange={e => setDineroContado(e.target.value)}
+                         />
+                      </div>
+                   </div>
+
+                   <div className={`rounded-2xl p-4 border flex flex-col justify-center transition-colors
+                      ${dineroContado === '' ? 'bg-neutral-950 border-neutral-800' : 
+                        Math.abs(diferenciaArqueo) < 100 ? 'bg-emerald-950/30 border-emerald-900/50' : 
+                        diferenciaArqueo > 0 ? 'bg-orange-950/30 border-orange-900/50' : 'bg-red-950/30 border-red-900/50'}
+                   `}>
+                      <p className="text-[10px] uppercase font-bold text-neutral-500 tracking-widest mb-1">Diferencia</p>
+                      {dineroContado === '' ? (
+                         <p className="text-neutral-600 text-sm font-bold">Ingresa billetes ↑</p>
+                      ) : (
+                         <div className="flex items-center gap-2">
+                            {Math.abs(diferenciaArqueo) < 100 ? <CheckCircle2 className="text-emerald-500" size={20}/> : <AlertTriangle className={diferenciaArqueo > 0 ? 'text-orange-500' : 'text-red-500'} size={20}/>}
+                            <p className={`text-xl font-black font-mono
+                               ${Math.abs(diferenciaArqueo) < 100 ? 'text-emerald-400' : diferenciaArqueo > 0 ? 'text-orange-400' : 'text-red-400'}`}>
+                               {diferenciaArqueo > 0 ? '+' : ''}{diferenciaArqueo.toLocaleString()}
+                            </p>
+                         </div>
+                      )}
+                      {dineroContado !== '' && Math.abs(diferenciaArqueo) >= 100 && (
+                         <p className={`text-[10px] font-bold mt-1 ${diferenciaArqueo > 0 ? 'text-orange-500/70' : 'text-red-500/70'}`}>
+                            {diferenciaArqueo > 0 ? 'Sobra dinero en caja' : 'Falta dinero en caja'}
+                         </p>
+                      )}
+                      {dineroContado !== '' && Math.abs(diferenciaArqueo) < 100 && (
+                         <p className="text-[10px] font-bold mt-1 text-emerald-500/70">
+                            Caja cuadrada perfectamente
+                         </p>
+                      )}
+                   </div>
+                   
+                </div>
+             </div>
+          </div>
+
           {Object.entries(grupos).map(([fecha, lista]) => {
             const isExpanded = !!expandedDates[fecha];
             return (

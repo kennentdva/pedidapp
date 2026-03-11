@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download, FileText, Check, X } from 'lucide-react';
+import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download, FileText, Check, X, MessageCircle } from 'lucide-react';
 import { type Cliente, type Pedido, MENU_CONFIG_ID, useOrderStore } from '../store/orderStore';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -424,10 +424,25 @@ export default function Cuentas() {
       });
     }
     
-    texto += `\n*TOTAL DEUDA: $${deuda.toLocaleString()}*\n\nSi deseas transferir, puedes hacerlo a:\nNequi: 3044118649`;
+    texto += `\n*TOTAL DEUDA: $${deuda.toLocaleString()}*\n\nSi deseas transferir, puedes hacerlo a:\nNequi: 3044118649\n(Esta misma llave sirve si transfieres desde otro banco)`;
     
-    navigator.clipboard.writeText(texto);
-    alert('Reporte copiado al portapapeles.');
+    return texto;
+  };
+
+  const copiarReporte = () => {
+    const texto = generarReporteText();
+    if (texto) {
+       navigator.clipboard.writeText(texto);
+       alert('Reporte copiado al portapapeles.');
+    }
+  };
+
+  const enviarWhatsApp = () => {
+    const texto = generarReporteText();
+    if (texto) {
+       const url = `https://wa.me/?text=${encodeURIComponent(texto)}`;
+       window.open(url, '_blank');
+    }
   };
 
   const generarReporteGlobalPDF = async () => {
@@ -799,11 +814,14 @@ export default function Cuentas() {
                  </label>
                </div>
                {deudaVisible > 0 && (
-                 <div className="flex gap-2">
+                 <div className="flex flex-wrap gap-2 justify-end mt-2 md:mt-0">
                    <button onClick={generarReporteIndividualPDF} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors" title="Descargar como PDF">
                      <Download size={14}/> PDF
                    </button>
-                   <button onClick={generarReporteText} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors">
+                   <button onClick={enviarWhatsApp} className="flex items-center gap-2 text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors">
+                     <MessageCircle size={14}/> WhatsApp
+                   </button>
+                   <button onClick={copiarReporte} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors">
                      <Share2 size={14}/> Copiar
                    </button>
                  </div>
