@@ -160,12 +160,17 @@ export default function Despacho() {
                                <span className="text-lg">🍲</span> {p.detalle.sopa}
                             </div>
                          )}
+                         {p.detalle.nota && (
+                            <div className="mt-1 text-yellow-400 text-xs font-medium italic">
+                               ⚠️ Nota: {p.detalle.nota}
+                            </div>
+                         )}
                         <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                           <span className={`text-xs px-2 py-1 rounded-md font-bold ${p.pagado ? 'bg-blue-500/20 text-blue-400' : 'bg-orange-500/20 text-orange-400'}`}>
-                             {p.pagado ? 'Pagado' : 'Deuda / Fiado'}
+                           <span className={`text-xs px-2 py-1 rounded-md font-bold shrink-0 ${p.pagado ? 'bg-blue-500/20 text-blue-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                             {p.pagado ? 'Pagado' : 'Deuda'}
                            </span>
                            {(p as any).clientes?.nombre && (
-                             <span className="text-xs px-2 py-1 rounded-md bg-neutral-800 text-neutral-300">
+                             <span className="text-xs px-2 py-1 rounded-md bg-neutral-800 text-neutral-300 truncate max-w-[140px]" title={(p as any).clientes?.nombre}>
                                Resp: {(p as any).clientes?.nombre}
                              </span>
                            )}
@@ -260,10 +265,15 @@ export default function Despacho() {
                                  🍲 {p.detalle.sopa}
                                </div>
                              )}
+                             {p.detalle.nota && (
+                               <div className="text-[11px] text-yellow-400 italic mt-1 max-w-[200px] truncate" title={p.detalle.nota}>
+                                 ⚠️ Nota: {p.detalle.nota}
+                               </div>
+                             )}
                            </td>
-                           <td className="px-6 py-4 whitespace-nowrap text-neutral-400">
+                           <td className="px-6 py-4 whitespace-nowrap text-neutral-400" title={clientes.find(c => c.id === p.responsable_id)?.nombre || 'Sin Cuenta (Efectivo)'}>
                              <select 
-                               className="bg-neutral-800 border border-neutral-700 rounded p-1 text-xs outline-none text-neutral-300 focus:border-blue-500"
+                               className="bg-neutral-800 border border-neutral-700 rounded p-1 text-xs outline-none text-neutral-300 focus:border-blue-500 max-w-[120px] truncate"
                                value={p.responsable_id || 'null'}
                                onChange={(e) => asignarResponsable(p.id!, e.target.value)}
                              >

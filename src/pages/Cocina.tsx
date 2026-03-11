@@ -203,6 +203,11 @@ export default function Cocina() {
                   {p.detalle?.extras && p.detalle.extras.length > 0 && (
                     <p className="flex justify-between"><span className="text-purple-400">Extras:</span> <span className="text-right text-sm text-purple-300">{p.detalle.extras.join(', ')}</span></p>
                   )}
+                  {p.detalle?.nota && (
+                    <div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                      <p className="text-yellow-400 text-sm font-medium italic">⚠️ Nota: {p.detalle.nota}</p>
+                    </div>
+                  )}
                 </div>
 
                 <button 
