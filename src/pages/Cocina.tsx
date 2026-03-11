@@ -98,11 +98,19 @@ export default function Cocina() {
     return acc;
   }, {} as Record<string, number>);
 
+  const resumenSopas = pedidosPendientes.reduce((acc, p) => {
+    const sopa = p.detalle?.sopa;
+    if (sopa) {
+      acc[sopa] = (acc[sopa] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
       
       {/* Dashboard Top */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 w-full">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6 w-full">
         <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col items-center justify-center text-center">
            <Flame size={20} className="text-orange-500 mb-1" />
            <span className="text-xs uppercase tracking-widest font-semibold mb-1 text-neutral-400">Total Hoy</span>
@@ -128,6 +136,18 @@ export default function Cocina() {
                </div>
              ))}
              {Object.keys(resumenProteinas).length === 0 && <span className="text-xs text-neutral-500 mt-2">Todo limpio 🧹</span>}
+           </div>
+        </div>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
+           <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-neutral-800 pb-1">Sopas Pendientes</span>
+           <div className="flex flex-wrap gap-2 justify-center content-center pt-1">
+             {Object.entries(resumenSopas).map(([sopa, cant]) => (
+               <div key={sopa} className="flex flex-col items-center bg-neutral-950 px-2 rounded min-w-[50px]">
+                 <span className="text-lg font-black text-amber-500">{cant}</span>
+                 <span className="text-[10px] text-neutral-400 truncate max-w-[60px]">{sopa}</span>
+               </div>
+             ))}
+             {Object.keys(resumenSopas).length === 0 && <span className="text-xs text-neutral-500 mt-2">Sin sopas 🍲</span>}
            </div>
         </div>
       </div>
