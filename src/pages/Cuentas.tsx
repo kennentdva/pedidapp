@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download } from 'lucide-react';
+import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download, FileText, Check, X } from 'lucide-react';
 import { type Cliente, type Pedido, MENU_CONFIG_ID, useOrderStore } from '../store/orderStore';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -13,6 +13,7 @@ export default function Cuentas() {
   const [pagosRealizados, setPagosRealizados] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [deudaGlobal, setDeudaGlobal] = useState(0);
+  const [deudoresList, setDeudoresList] = useState<{cliente: Cliente, deuda: number}[]>([]);
   const [editingPrecioId, setEditingPrecioId] = useState<string | null>(null);
   const [nuevoPrecio, setNuevoPrecio] = useState<number | string>('');
 
@@ -31,6 +32,15 @@ export default function Cuentas() {
   const [histExtrasText, setHistExtrasText] = useState('');
   const [histPrecio, setHistPrecio] = useState<number | string>('');
   const [savingHistorico, setSavingHistorico] = useState(false);
+  
+  // Formulario Masivo (Parser)
+  const [mostrarModalMasivo, setMostrarModalMasivo] = useState(false);
+  const [textoMasivo, setTextoMasivo] = useState('');
+  const [fechaMasiva, setFechaMasiva] = useState(new Date().toISOString().split('T')[0]);
+  const [itemsMasivos, setItemsMasivos] = useState<any[]>([]);
+  const [savingMasivo, setSavingMasivo] = useState(false);
+  const [stepMasivo, setStepMasivo] = useState<'input' | 'review'>('input');
+
   const menuConfig = useOrderStore(state => state.menuConfig);
 
   useEffect(() => {
@@ -46,6 +56,8 @@ export default function Cuentas() {
     
     if (clientesData && pedidosData && pagosData) {
       let totalGlobal = 0;
+      const listDeudores: {cliente: Cliente, deuda: number}[] = [];
+
       clientesData.forEach(cliente => {
         if (cliente.id === MENU_CONFIG_ID) return;
         const pedCli = pedidosData.filter(p => !p.pagado && p.responsable_id === cliente.id);
@@ -57,9 +69,11 @@ export default function Cuentas() {
 
         if (deudaNeta > 0) {
           totalGlobal += deudaNeta;
+          listDeudores.push({ cliente: cliente as Cliente, deuda: deudaNeta });
         }
       });
       setDeudaGlobal(totalGlobal);
+      setDeudoresList(listDeudores.sort((a, b) => b.deuda - a.deuda));
     } else {
       console.error("Error fetching global debt:", errP, errPag);
     }
@@ -244,6 +258,129 @@ export default function Cuentas() {
        alert('Error al agregar el pedido histórico.');
     }
     setSavingHistorico(false);
+  };
+
+  const analizarTextoMasivo = () => {
+    if (!textoMasivo.trim()) return;
+    
+    const lineas = textoMasivo.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const parsedItems: any[] = [];
+
+    lineas.forEach((linea, index) => {
+       const lowerLinea = linea.toLowerCase();
+       let isPagado = false;
+       
+       // Detectar si está pagado
+       if (lowerLinea.includes('pago') || lowerLinea.includes('pagó') || lowerLinea.includes('cancelo') || lowerLinea.includes('canceló')) {
+          isPagado = true;
+       }
+
+       // Intentar encontrar proteína
+       let proteinaEncontrada = menuConfig.proteinas.find(p => lowerLinea.includes(p.toLowerCase())) || 'Corriente';
+       
+       // Intentar encontrar sopa
+       let sopaEncontrada = lowerLinea.includes('sin sopa') ? '' : (lowerLinea.includes('sopa') ? (menuConfig.sopas[0] || 'Sopa del día') : '');
+       
+       // Limpiar un poco el nombre (estrategia súper básica: tomar las primeras palabras antes de encontrar comida)
+       const palabras = linea.split(' ');
+       let posibleNombre = '';
+       for (const word of palabras) {
+          const wLow = word.toLowerCase();
+          if (menuConfig.proteinas.some(p => p.toLowerCase().includes(wLow)) || 
+              wLow === 'con' || wLow === 'sin' || wLow === 'sopa' || wLow === 'pago') {
+             break;
+          }
+          posibleNombre += word + ' ';
+       }
+       posibleNombre = posibleNombre.trim() || `Usuario ${index + 1}`;
+
+       // Buscar cliente existente
+       const clienteExistente = clientes.find(c => c.nombre.toLowerCase().includes(posibleNombre.toLowerCase()) || posibleNombre.toLowerCase().includes(c.nombre.toLowerCase()));
+
+       parsedItems.push({
+          id_temp: Date.now() + index,
+          originalLinea: linea,
+          clienteId: clienteExistente ? clienteExistente.id : 'NUEVO',
+          nuevoNombreCliente: clienteExistente ? '' : posibleNombre,
+          proteina: proteinaEncontrada,
+          sopa: sopaEncontrada,
+          pagado: isPagado,
+          // Precio sugerido básico (se puede editar)
+          precio: sopaEncontrada ? 15000 : 13000
+       });
+    });
+
+    setItemsMasivos(parsedItems);
+    setStepMasivo('review');
+  };
+
+  const guardarMasivo = async () => {
+    setSavingMasivo(true);
+    let errores = 0;
+
+    for (const item of itemsMasivos) {
+       let idAUsar = item.clienteId;
+       let nombreAUsar = '';
+
+       // Si es cliente nuevo, crearlo en BD
+       if (idAUsar === 'NUEVO') {
+          if (!item.nuevoNombreCliente) item.nuevoNombreCliente = 'Desconocido';
+          nombreAUsar = item.nuevoNombreCliente;
+          const { data: newC } = await supabase.from('clientes').insert([{ nombre: nombreAUsar }]).select();
+          if (newC && newC.length > 0) {
+             idAUsar = newC[0].id;
+          } else {
+             errores++;
+             continue; // Saltar si falla la creación
+          }
+       } else {
+          nombreAUsar = clientes.find(c => c.id === idAUsar)?.nombre || 'Desconocido';
+       }
+
+       // Crear el Pedido
+       const nuevoPedido = {
+         responsable_id: idAUsar,
+         beneficiario: nombreAUsar,
+         detalle: {
+           proteina: item.proteina,
+           acompanamientos: [],
+           sopa: item.sopa || null,
+           extras: [item.originalLinea] // Guardamos toda la línea como nota por si acaso
+         },
+         valor: Number(item.precio) || 0,
+         estado_cocina: 'empacado',
+         estado_entrega: 'entregado',
+         pagado: item.pagado,
+         created_at: new Date(fechaMasiva + 'T12:00:00').toISOString()
+       };
+
+       const { data: pedData, error: pedErr } = await supabase.from('pedidos').insert([nuevoPedido]).select();
+
+       if (pedErr) {
+          errores++;
+       } else if (item.pagado && pedData && pedData.length > 0) {
+          // Si estaba marcado como pagado, generar también el abono para saldar la cuenta
+          await supabase.from('pagos').insert([{
+             cliente_id: idAUsar,
+             monto: Number(item.precio) || 0,
+             metodo: 'Saldado: Efectivo (Importado)'
+          }]);
+       }
+    }
+
+    setSavingMasivo(false);
+    if (errores > 0) {
+       alert(`Proceso finalizado, pero hubo ${errores} errores al insertar pedidos.`);
+    } else {
+       alert('Todos los pedidos importados correctamente.');
+       setMostrarModalMasivo(false);
+       setTextoMasivo('');
+       setItemsMasivos([]);
+       setStepMasivo('input');
+       fetchClientes(); // Para traer los nuevos creados
+       fetchDeudaGlobal();
+       if (selectedCliente) seleccionarCliente(selectedCliente);
+    }
   };
 
   const generarReporteText = () => {
@@ -449,9 +586,31 @@ export default function Cuentas() {
            >
              <Download size={14}/> PDF Global
            </button>
-        </div>
+         </div>
 
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-xl flex flex-col flex-1">
+         {/* Lista Rápida de Deudores */}
+         {deudoresList.length > 0 && (
+           <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col max-h-48 overflow-hidden">
+              <h3 className="text-sm font-bold text-neutral-400 mb-2 flex items-center justify-between">
+                <span>Cuentas Pendientes</span>
+                <span className="bg-red-500/20 text-red-400 text-[10px] px-2 py-0.5 rounded-full">{deudoresList.length}</span>
+              </h3>
+              <div className="overflow-y-auto pr-2 space-y-2">
+                {deudoresList.map(item => (
+                  <button 
+                    key={item.cliente.id} 
+                    onClick={() => seleccionarCliente(item.cliente)}
+                    className="w-full flex justify-between items-center text-left hover:bg-neutral-800 p-2 rounded-xl transition-colors group"
+                  >
+                    <span className="text-xs font-bold text-neutral-300 truncate w-3/5" title={item.cliente.nombre}>{item.cliente.nombre}</span>
+                    <span className="text-xs font-mono text-red-400 font-bold group-hover:text-red-300 transition-colors">${item.deuda.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+           </div>
+         )}
+
+         <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-xl flex flex-col flex-1">
           <h2 className="text-xl font-bold flex items-center gap-2 mb-4">
             <Wallet className="text-blue-500" /> Cuentas
           </h2>
@@ -472,6 +631,12 @@ export default function Cuentas() {
               }}
             />
           </div>
+
+          <button 
+             onClick={() => setMostrarModalMasivo(true)}
+             className="w-full mb-4 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold py-3 rounded-xl border border-neutral-700 flex items-center justify-center gap-2 transition-colors">
+             <FileText size={18} className="text-blue-400" /> Carga Rápida (Pegar Texto)
+          </button>
 
           {!selectedCliente && search && (
              <div className="bg-neutral-950 border border-neutral-800 rounded-xl max-h-60 overflow-y-auto">
@@ -750,9 +915,165 @@ export default function Cuentas() {
              <Banknote size={80} className="mb-6 opacity-20"/>
              <p className="text-2xl font-bold">Módulo de Cuentas Corrientes</p>
              <p className="mt-2 text-center max-w-sm">Busca un cliente frecuente a la izquierda para visualizar su estado de cuenta y registrar pagos.</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+           </div>
+         )}
+       </div>
+
+       {/* MODAL MASA_IMPORT */}
+       {mostrarModalMasivo && (
+         <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+               <div className="p-6 border-b border-neutral-800 flex justify-between items-center bg-neutral-950/50">
+                  <h2 className="text-2xl font-black text-white flex items-center gap-2">
+                     <FileText className="text-blue-500" /> Carga Rápida de Pedidos
+                  </h2>
+                  <button onClick={() => setMostrarModalMasivo(false)} className="text-neutral-500 hover:text-white bg-neutral-800 rounded-full p-2"><X size={20}/></button>
+               </div>
+               
+               <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+                  {stepMasivo === 'input' && (
+                     <div className="animate-fade-in flex flex-col h-full gap-4">
+                        <p className="text-neutral-400">Pega aquí la lista de pedidos de WhatsApp (un pedido por línea). El sistema intentará separar automáticamente los nombres, la comida y detectará si escribieron "pago".</p>
+                        
+                        <div>
+                           <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest block mb-1">Fecha de estos pedidos</label>
+                           <input type="date" value={fechaMasiva} onChange={e => setFechaMasiva(e.target.value)} className="bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-blue-500 block max-w-xs" />
+                        </div>
+
+                        <textarea 
+                           className="w-full flex-1 min-h-[300px] bg-neutral-950 border border-neutral-800 rounded-2xl p-4 text-white resize-none outline-none focus:border-blue-500 font-mono text-sm leading-relaxed"
+                           placeholder="Ejemplo:&#10;María Laura carne molida con sopa&#10;Lina posta sin arroz&#10;Andrés Aguilera sopa con arroz pago"
+                           value={textoMasivo}
+                           onChange={e => setTextoMasivo(e.target.value)}
+                        />
+                     </div>
+                  )}
+
+                  {stepMasivo === 'review' && (
+                     <div className="animate-fade-in space-y-4">
+                        <p className="text-neutral-400">Revisa y ajusta los detalles antes de guardarlos. Fecha: <strong className="text-white">{fechaMasiva}</strong></p>
+                        <div className="bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden overflow-x-auto">
+                           <table className="w-full text-left text-sm whitespace-nowrap">
+                              <thead className="bg-neutral-900 border-b border-neutral-800 text-neutral-500">
+                                 <tr>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs w-1/4">Cliente</th>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs">Proteína</th>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs">Sopa</th>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs w-32">Precio ($)</th>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs w-24 text-center">Pagado</th>
+                                    <th className="p-4 font-black tracking-widest uppercase text-xs w-20"></th>
+                                 </tr>
+                              </thead>
+                              <tbody>
+                                 {itemsMasivos.map((item, idx) => (
+                                    <tr key={item.id_temp} className="border-b border-neutral-800/50 hover:bg-neutral-900/50">
+                                       <td className="p-3">
+                                          {item.clienteId === 'NUEVO' ? (
+                                             <div className="flex flex-col gap-1 w-full">
+                                                <span className="text-[10px] text-orange-400 font-bold bg-orange-500/10 px-2 py-0.5 rounded-full inline-block w-max mb-1">Nuevo Cliente</span>
+                                                <input title={item.originalLinea} type="text" className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full outline-none focus:ring-1 focus:ring-blue-500" value={item.nuevoNombreCliente} onChange={e => {
+                                                   const newItems = [...itemsMasivos];
+                                                   newItems[idx].nuevoNombreCliente = e.target.value;
+                                                   setItemsMasivos(newItems);
+                                                }} />
+                                                <select className="bg-neutral-900 text-neutral-500 p-1 text-xs border border-neutral-800 rounded cursor-pointer w-full mt-1" onChange={e => {
+                                                   if (e.target.value) {
+                                                      const newItems = [...itemsMasivos];
+                                                      newItems[idx].clienteId = e.target.value;
+                                                      setItemsMasivos(newItems);
+                                                   }
+                                                }}>
+                                                   <option value="">¿Es un cliente existente?</option>
+                                                   {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                                </select>
+                                             </div>
+                                          ) : (
+                                             <div className="flex flex-col gap-1 w-full">
+                                                <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full outline-none focus:ring-1 focus:ring-blue-500 font-bold" value={item.clienteId} onChange={e => {
+                                                   const newItems = [...itemsMasivos];
+                                                   newItems[idx].clienteId = e.target.value;
+                                                   setItemsMasivos(newItems);
+                                                }}>
+                                                   {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                                   <option value="NUEVO">-- Crear Nuevo Cliente --</option>
+                                                </select>
+                                                <p className="text-[10px] text-neutral-500 truncate mt-1 break-all" title={item.originalLinea}>{item.originalLinea}</p>
+                                             </div>
+                                          )}
+                                       </td>
+                                       <td className="p-3">
+                                          <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full" value={item.proteina} onChange={e => {
+                                             const newItems = [...itemsMasivos];
+                                             newItems[idx].proteina = e.target.value;
+                                             setItemsMasivos(newItems);
+                                          }}>
+                                             {menuConfig.proteinas.map(p => <option key={p} value={p}>{p}</option>)}
+                                          </select>
+                                       </td>
+                                       <td className="p-3">
+                                          <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full" value={item.sopa} onChange={e => {
+                                             const newItems = [...itemsMasivos];
+                                             newItems[idx].sopa = e.target.value;
+                                             setItemsMasivos(newItems);
+                                          }}>
+                                             <option value="">(Sin sopa)</option>
+                                             {menuConfig.sopas.map(s => <option key={s} value={s}>{s}</option>)}
+                                          </select>
+                                       </td>
+                                       <td className="p-3">
+                                          <div className="flex items-center text-white bg-neutral-800 rounded-lg p-2 focus-within:ring-1 focus-within:ring-blue-500">
+                                             <span className="text-neutral-500 mr-1">$</span>
+                                             <input type="number" className="bg-transparent w-full outline-none font-mono" value={item.precio} onChange={e => {
+                                                const newItems = [...itemsMasivos];
+                                                newItems[idx].precio = e.target.value;
+                                                setItemsMasivos(newItems);
+                                             }} />
+                                          </div>
+                                       </td>
+                                       <td className="p-3 text-center">
+                                          <input type="checkbox" className="w-5 h-5 rounded border-neutral-700 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 cursor-pointer" checked={item.pagado} onChange={e => {
+                                             const newItems = [...itemsMasivos];
+                                             newItems[idx].pagado = e.target.checked;
+                                             setItemsMasivos(newItems);
+                                          }} />
+                                       </td>
+                                       <td className="p-3">
+                                          <button onClick={() => {
+                                             setItemsMasivos(itemsMasivos.filter((_, i) => i !== idx));
+                                          }} className="text-red-500 hover:text-red-400 p-2"><Trash2 size={18}/></button>
+                                       </td>
+                                    </tr>
+                                 ))}
+                                 {itemsMasivos.length === 0 && (
+                                    <tr>
+                                       <td colSpan={6} className="text-center p-8 text-neutral-500">No hay elementos para procesar.</td>
+                                    </tr>
+                                 )}
+                              </tbody>
+                           </table>
+                        </div>
+                     </div>
+                  )}
+               </div>
+               
+               <div className="p-6 border-t border-neutral-800 bg-neutral-950 flex justify-between gap-4">
+                  {stepMasivo === 'review' && (
+                     <button onClick={() => setStepMasivo('input')} className="px-6 py-3 rounded-xl bg-neutral-800 text-white font-bold hover:bg-neutral-700 transition">Atrás</button>
+                  )}
+                  {stepMasivo === 'input' && (
+                     <button onClick={analizarTextoMasivo} disabled={!textoMasivo.trim()} className="w-full flex justify-center items-center gap-2 px-6 py-3 rounded-xl bg-blue-600 text-white font-black hover:bg-blue-500 transition disabled:opacity-50">
+                        <Search size={18}/> Analizar y Previsualizar
+                     </button>
+                  )}
+                  {stepMasivo === 'review' && (
+                     <button onClick={guardarMasivo} disabled={savingMasivo || itemsMasivos.length === 0} className="w-full flex justify-center items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-500 transition disabled:opacity-50">
+                        {savingMasivo ? 'Guardando Masivamente...' : <><Check size={18}/> Confirmar y Guardar Todo</>}
+                     </button>
+                  )}
+               </div>
+            </div>
+         </div>
+       )}
+     </div>
+   );
+ }
