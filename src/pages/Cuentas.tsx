@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2 } from 'lucide-react';
+import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download } from 'lucide-react';
 import { type Cliente, type Pedido, MENU_CONFIG_ID } from '../store/orderStore';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export default function Cuentas() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -234,6 +236,142 @@ export default function Cuentas() {
     alert('Reporte copiado al portapapeles.');
   };
 
+  const generarReporteGlobalPDF = async () => {
+    try {
+      setLoading(true);
+      const { data: clientesData } = await supabase.from('clientes').select('*');
+      const { data: pedidosData } = await supabase.from('pedidos').select('responsable_id, valor, pagado');
+      const { data: pagosData } = await supabase.from('pagos').select('cliente_id, monto, metodo');
+
+      if (!clientesData || !pedidosData || !pagosData) throw new Error("Datos no disponibles");
+
+      const tablaDeudas: any[] = [];
+      let deudaTotalGlobal = 0;
+
+      clientesData.forEach(cliente => {
+         if (cliente.id === MENU_CONFIG_ID) return;
+
+         const pedCli = pedidosData.filter(p => !p.pagado && p.responsable_id === cliente.id);
+         const pagCli = pagosData.filter(p => p.cliente_id === cliente.id && !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+
+         const sumConsumo = pedCli.reduce((acc, p) => acc + p.valor, 0);
+         const sumAbonos = pagCli.reduce((acc, p) => acc + p.monto, 0);
+         const deudaNeta = Math.max(0, sumConsumo - sumAbonos);
+
+         if (deudaNeta > 0) {
+            deudaTotalGlobal += deudaNeta;
+            tablaDeudas.push([
+              cliente.nombre,
+              cliente.es_frecuente ? 'Sí' : 'No',
+              `$${deudaNeta.toLocaleString()}`
+            ]);
+         }
+      });
+
+      tablaDeudas.sort((a, b) => {
+         const numA = Number(a[2].replace(/[$,]/g, ''));
+         const numB = Number(b[2].replace(/[$,]/g, ''));
+         return numB - numA;
+      });
+
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text("Reporte Global de Deudas - PedidApp", 14, 22);
+      
+      doc.setFontSize(11);
+      doc.setTextColor(100);
+      doc.text(`Fecha de generación: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 14, 30);
+
+      autoTable(doc, {
+        startY: 35,
+        head: [['Cliente', 'Frecuente', 'Deuda Neta ($)']],
+        body: tablaDeudas,
+        theme: 'striped',
+        headStyles: { fillColor: [220, 38, 38] },
+        foot: [['', 'TOTAL GLOBAL', `$${deudaTotalGlobal.toLocaleString()}`]],
+        footStyles: { fillColor: [40, 40, 40], fontStyle: 'bold' }
+      });
+
+      doc.save(`Deudas_Globales_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert("Error al generar PDF");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generarReporteIndividualPDF = () => {
+    if (!selectedCliente || historialPedidos.length === 0) return;
+    
+    const deuda = calcularDeudaTotal();
+    
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text(`Estado de Cuenta: ${selectedCliente.nombre.trim()}`, 14, 22);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 14, 30);
+    
+    const pedidosPendientes = mostrarArchivados ? historialPedidos : historialPedidos.filter(p => !p.pagado);
+    const tablaConsumos = pedidosPendientes.map(p => {
+       const d = new Date(p.created_at || '').toLocaleDateString();
+       let detalleStr = p.detalle?.proteina || '';
+       if (p.detalle?.sopa) detalleStr += ` + Sopa ${p.detalle.sopa}`;
+       if (p.detalle?.extras && p.detalle.extras.length > 0) detalleStr += ` + Extras: ${p.detalle.extras.join(', ')}`;
+       return [
+         d,
+         detalleStr,
+         `$${p.valor.toLocaleString()}`
+       ];
+    });
+
+    let finalY = 35;
+
+    if (tablaConsumos.length > 0) {
+      doc.setFontSize(14);
+      doc.setTextColor(0);
+      doc.text("Detalles de Consumo", 14, finalY);
+      autoTable(doc, {
+        startY: finalY + 5,
+        head: [['Fecha', 'Descripción', 'Valor']],
+        body: tablaConsumos,
+        theme: 'striped',
+        margin: { bottom: 10 }
+      });
+      finalY = (doc as any).lastAutoTable.finalY + 10;
+    }
+
+    const abonosGenerales = mostrarArchivados ? pagosRealizados : pagosRealizados.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+    const tablaAbonos = abonosGenerales.map(pago => [
+       new Date(pago.fecha || new Date()).toLocaleDateString(),
+       pago.metodo,
+       `$${pago.monto.toLocaleString()}`
+    ]);
+
+    if (tablaAbonos.length > 0) {
+      doc.setFontSize(14);
+      doc.setTextColor(0);
+      doc.text("Historial de Abonos", 14, finalY);
+      autoTable(doc, {
+        startY: finalY + 5,
+        head: [['Fecha', 'Método', 'Monto']],
+        body: tablaAbonos,
+        theme: 'striped',
+        headStyles: { fillColor: [16, 185, 129] },
+        margin: { bottom: 10 }
+      });
+      finalY = (doc as any).lastAutoTable.finalY + 10;
+    }
+
+    doc.setFontSize(16);
+    doc.setTextColor(220, 38, 38);
+    doc.text(`TOTAL DEUDA NETA: $${deuda.toLocaleString()}`, 14, finalY + 5);
+
+    doc.save(`Estado_Cuenta_${selectedCliente.nombre.trim().replace(/\s/g, '_')}.pdf`);
+  };
+
   const deudaVisible = calcularDeudaTotal();
 
   return (
@@ -243,9 +381,17 @@ export default function Cuentas() {
       <div className="w-full lg:w-1/3 flex flex-col gap-4">
         
         {/* Tarjeta de Resumen Global */}
-        <div className="bg-gradient-to-br from-red-600 to-orange-500 border border-red-500 rounded-3xl p-5 shadow-xl shadow-red-500/20 text-white">
+        <div className="bg-gradient-to-br from-red-600 to-orange-500 border border-red-500 rounded-3xl p-5 shadow-xl shadow-red-500/20 text-white relative">
            <p className="text-sm font-bold uppercase tracking-widest opacity-80 mb-1">Deuda Global en la Calle</p>
            <h3 className="text-4xl font-black">${deudaGlobal.toLocaleString()}</h3>
+           <button 
+             onClick={generarReporteGlobalPDF}
+             className="absolute right-4 bottom-4 bg-black/30 hover:bg-black/50 text-white text-xs font-bold py-2 px-3 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
+             title="Descargar PDF Global"
+             disabled={loading}
+           >
+             <Download size={14}/> PDF Global
+           </button>
         </div>
 
         <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-xl flex flex-col flex-1">
@@ -363,9 +509,14 @@ export default function Cuentas() {
                  </label>
                </div>
                {deudaVisible > 0 && (
-                 <button onClick={generarReporteText} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors">
-                   <Share2 size={14}/> Copiar Reporte WhatsApp
-                 </button>
+                 <div className="flex gap-2">
+                   <button onClick={generarReporteIndividualPDF} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors" title="Descargar como PDF">
+                     <Download size={14}/> PDF
+                   </button>
+                   <button onClick={generarReporteText} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors">
+                     <Share2 size={14}/> Copiar
+                   </button>
+                 </div>
                )}
              </div>
              
