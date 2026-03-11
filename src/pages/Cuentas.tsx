@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download } from 'lucide-react';
-import { type Cliente, type Pedido, MENU_CONFIG_ID } from '../store/orderStore';
+import { type Cliente, type Pedido, MENU_CONFIG_ID, useOrderStore } from '../store/orderStore';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -22,25 +22,44 @@ export default function Cuentas() {
   const [savingPayment, setSavingPayment] = useState(false);
   const [mostrarArchivados, setMostrarArchivados] = useState(false);
 
+  // Formulario Deuda Histórica
+  const [mostrarHistorico, setMostrarHistorico] = useState(false);
+  const [histFecha, setHistFecha] = useState(new Date().toISOString().split('T')[0]);
+  const [histProteina, setHistProteina] = useState('');
+  const [histSopa, setHistSopa] = useState('');
+  const [histAcomp, setHistAcomp] = useState<string[]>([]);
+  const [histExtrasText, setHistExtrasText] = useState('');
+  const [histPrecio, setHistPrecio] = useState<number | string>('');
+  const [savingHistorico, setSavingHistorico] = useState(false);
+  const menuConfig = useOrderStore(state => state.menuConfig);
+
   useEffect(() => {
     fetchClientes();
     fetchDeudaGlobal();
   }, []);
 
   const fetchDeudaGlobal = async () => {
-    // En lugar de pelear con Postgrest por los nulos, traemos los montos y sus estados y filtramos en JS.
-    // Esto es muy seguro porque solo traemos valores booleanos y números
-    const { data: pedidosData, error: errP } = await supabase.from('pedidos').select('valor, pagado');
-    const { data: pagosData, error: errPag } = await supabase.from('pagos').select('monto, metodo');
+    // Calculamos la deuda global igual que en el PDF (por cliente, sin dejar saldos negativos)
+    const { data: clientesData } = await supabase.from('clientes').select('id');
+    const { data: pedidosData, error: errP } = await supabase.from('pedidos').select('responsable_id, valor, pagado');
+    const { data: pagosData, error: errPag } = await supabase.from('pagos').select('cliente_id, monto, metodo');
     
-    if (pedidosData && pagosData) {
-      // Filtrar los que estrictamente no están pagados formalmente (incluye null y false)
-      const pedidosDeuda = pedidosData.filter(p => !p.pagado);
-      const pagosGenerales = pagosData.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+    if (clientesData && pedidosData && pagosData) {
+      let totalGlobal = 0;
+      clientesData.forEach(cliente => {
+        if (cliente.id === MENU_CONFIG_ID) return;
+        const pedCli = pedidosData.filter(p => !p.pagado && p.responsable_id === cliente.id);
+        const pagCli = pagosData.filter(p => p.cliente_id === cliente.id && !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
 
-      const totalConsumo = pedidosDeuda.reduce((acc, curr) => acc + curr.valor, 0);
-      const totalAbonos = pagosGenerales.reduce((acc, curr) => acc + curr.monto, 0);
-      setDeudaGlobal(Math.max(0, totalConsumo - totalAbonos));
+        const sumConsumo = pedCli.reduce((acc, p) => acc + p.valor, 0);
+        const sumAbonos = pagCli.reduce((acc, p) => acc + p.monto, 0);
+        const deudaNeta = Math.max(0, sumConsumo - sumAbonos);
+
+        if (deudaNeta > 0) {
+          totalGlobal += deudaNeta;
+        }
+      });
+      setDeudaGlobal(totalGlobal);
     } else {
       console.error("Error fetching global debt:", errP, errPag);
     }
@@ -186,17 +205,55 @@ export default function Cuentas() {
     }
   };
 
+  const procesarDeudaHistorica = async () => {
+    if (!selectedCliente) return;
+    const valor = typeof histPrecio === 'string' ? parseFloat(histPrecio) : histPrecio;
+    if (!histFecha || !histProteina || !valor || valor <= 0) return alert('Fecha, Proteína y Valor son obligatorios.');
+
+    setSavingHistorico(true);
+
+    const extrasArray = histExtrasText.split(',').map(e => e.trim()).filter(e => e.length > 0);
+
+    const nuevoPedidoHistorico = {
+      responsable_id: selectedCliente.id,
+      beneficiario: selectedCliente.nombre,
+      detalle: {
+        proteina: histProteina,
+        acompanamientos: histAcomp,
+        sopa: histSopa || null,
+        extras: extrasArray
+      },
+      valor: valor,
+      estado_cocina: 'empacado',
+      estado_entrega: 'entregado',
+      pagado: false,
+      created_at: new Date(histFecha + 'T12:00:00').toISOString() // Simulamos medio día para evitar timezone issues
+    };
+
+    const { error } = await supabase.from('pedidos').insert([nuevoPedidoHistorico]);
+
+    if (!error) {
+       alert('Deuda histórica agregada correctamente.');
+       setMostrarHistorico(false);
+       // Reset form
+       setHistProteina(''); setHistSopa(''); setHistAcomp([]); setHistExtrasText(''); setHistPrecio(''); setHistFecha(new Date().toISOString().split('T')[0]);
+       
+       seleccionarCliente(selectedCliente);
+       fetchDeudaGlobal();
+    } else {
+       alert('Error al agregar el pedido histórico.');
+    }
+    setSavingHistorico(false);
+  };
+
   const generarReporteText = () => {
     if (!selectedCliente || historialPedidos.length === 0) return;
     
     // El total consumido menos lo pagado
     const deuda = calcularDeudaTotal();
     if (deuda <= 0) return alert('Este cliente no tiene deudas pendientes.');
-
-    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const mesActual = meses[new Date().getMonth()];
     
-    let texto = `${selectedCliente.nombre.trim()} ${mesActual}\n\n`;
+    let texto = `*Restaurante Mayiya*\n\nHola ${selectedCliente.nombre.trim()}, te compartimos tu estado de cuenta a la fecha.\n\n`;
     
     // Solo mostrar los pedidos que sumados superan el monto pagado (desde los más recientes hacia atrás)
     // O de forma más simple según el usuario: Solo mostrar los que no están marcados como pagados formalmente.
@@ -230,7 +287,7 @@ export default function Cuentas() {
       });
     }
     
-    texto += `\n*TOTAL DEUDA: $${deuda.toLocaleString()}*`;
+    texto += `\n*TOTAL DEUDA: $${deuda.toLocaleString()}*\n\nSi deseas transferir, puedes hacerlo a:\nNequi: 3044118649`;
     
     navigator.clipboard.writeText(texto);
     alert('Reporte copiado al portapapeles.');
@@ -445,7 +502,12 @@ export default function Cuentas() {
                    <h2 className="text-3xl font-black text-white decoration-blue-500 underline decoration-4 underline-offset-4 mb-2">{selectedCliente.nombre}</h2>
                    <p className="text-neutral-400 font-mono text-sm">ID: {selectedCliente.id.split('-')[0]}...</p>
                 </div>
-                 <div className="bg-neutral-950 p-4 border border-neutral-800 rounded-2xl flex flex-col gap-1 min-w-[200px] shadow-2xl">
+                 <div className="bg-neutral-950 p-4 border border-neutral-800 rounded-2xl flex flex-col gap-1 min-w-[200px] shadow-2xl relative">
+                    <button 
+                       onClick={() => setMostrarHistorico(!mostrarHistorico)}
+                       className="absolute -top-3 -right-3 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full shadow-lg transition-transform hover:scale-105">
+                       {mostrarHistorico ? 'Cerrar Histórico' : '+ Deuda Histórica'}
+                    </button>
                     <div className="flex justify-between items-center text-[10px] uppercase font-black text-neutral-500 tracking-widest">
                       <span>Consumido (Pendiente):</span>
                       <span className="text-white font-mono">${getSubtotalConsumo().toLocaleString()}</span>
@@ -460,6 +522,69 @@ export default function Cuentas() {
                     </div>
                  </div>
               </div>
+
+             {/* Formulario Deuda Histórica */}
+             {mostrarHistorico && (
+                <div className="bg-neutral-950 border border-blue-900/50 rounded-2xl p-4 mb-6 shadow-inner animate-fade-in">
+                   <h3 className="text-sm font-black text-blue-400 uppercase tracking-widest border-b border-neutral-800 pb-2 mb-4">Registrar Pedido Histórico</h3>
+                   
+                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                     <div>
+                       <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Fecha del Pedido</label>
+                       <input type="date" value={histFecha} onChange={e => setHistFecha(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-white text-sm focus:border-blue-500 outline-none" />
+                     </div>
+                     <div>
+                       <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Proteína <span className="text-red-500">*</span></label>
+                       <select value={histProteina} onChange={e => setHistProteina(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-white text-sm focus:border-blue-500 outline-none">
+                         <option value="">Selecciona...</option>
+                         {menuConfig.proteinas.map(p => <option key={p} value={p}>{p}</option>)}
+                       </select>
+                     </div>
+                     <div>
+                       <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Sopa</label>
+                       <select value={histSopa} onChange={e => setHistSopa(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-white text-sm focus:border-blue-500 outline-none">
+                         <option value="">Ninguna / No aplica</option>
+                         {menuConfig.sopas.map(s => <option key={s} value={s}>{s}</option>)}
+                       </select>
+                     </div>
+                   </div>
+
+                   <div className="mb-4">
+                     <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-2">Acompañamientos</label>
+                     <div className="flex flex-wrap gap-2">
+                       {menuConfig.acompanamientos.map(a => (
+                         <button 
+                           key={a}
+                           onClick={() => setHistAcomp(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a])}
+                           className={`px-3 py-1 rounded-full text-xs font-bold border ${histAcomp.includes(a) ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-900 border-neutral-800 text-neutral-400'}`}>
+                           {a}
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                     <div>
+                       <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Extras (separados por coma)</label>
+                       <input type="text" placeholder="Ej: Gaseosa, Postre" value={histExtrasText} onChange={e => setHistExtrasText(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-white text-sm focus:border-blue-500 outline-none" />
+                     </div>
+                     <div>
+                       <label className="text-[10px] text-neutral-500 font-bold uppercase block mb-1">Valor Total <span className="text-red-500">*</span></label>
+                       <div className="relative">
+                         <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" size={14}/>
+                         <input type="number" placeholder="Ej: 15000" value={histPrecio} onChange={e => setHistPrecio(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 pl-7 text-white text-sm font-bold focus:border-blue-500 outline-none" />
+                       </div>
+                     </div>
+                   </div>
+
+                   <button 
+                     onClick={procesarDeudaHistorica}
+                     disabled={savingHistorico}
+                     className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-3 rounded-xl transition-colors disabled:opacity-50">
+                     {savingHistorico ? 'Guardando...' : 'Guardar Histórico'}
+                   </button>
+                </div>
+             )}
 
              {/* Gestión de Pago Rápida */}
              {deudaVisible > 0 && !loading && (
