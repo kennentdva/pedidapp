@@ -13,8 +13,15 @@ export default function Ventas() {
   const [nuevoCliente, setNuevoCliente] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'Restaurante' | 'Snacks'>('Restaurante');
+  const [snackQtys, setSnackQtys] = useState<Record<string, number>>({});
   const [pedidosRecientes, setPedidosRecientes] = useState<any[]>([]);
-  const [editingPedidoId, setEditingPedidoId] = useState<string | null>(null);
+
+  const updateSnackQty = (snack: string, delta: number) => {
+     setSnackQtys(prev => ({
+        ...prev,
+        [snack]: Math.max(1, (prev[snack] || 1) + delta)
+     }));
+  };
 
   // Estados locales para la edición del menú
   const [newProteina, setNewProteina] = useState('');
@@ -42,9 +49,8 @@ export default function Ventas() {
     const { data } = await supabase.from('pedidos')
       .select('*, clientes(nombre)')
       .gte('created_at', startOfDay.toISOString())
-      .neq('estado_cocina', 'empacado')
-      .order('created_at', { ascending: false })
-      .limit(10);
+      .eq('estado_cocina', 'pendiente')
+      .order('created_at', { ascending: false });
     if (data) setPedidosRecientes(data);
   };
 
@@ -89,20 +95,19 @@ export default function Ventas() {
       pagado: false
     };
 
-    if (editingPedidoId) {
+    if (store.editingPedidoId) {
        const { error } = await supabase.from('pedidos').update({
          responsable_id: orderData.responsable_id,
          beneficiario: orderData.beneficiario,
          detalle: orderData.detalle,
          valor: orderData.valor
-       }).eq('id', editingPedidoId);
+       }).eq('id', store.editingPedidoId);
        
        setSaving(false);
        if (error) {
          alert("Error al actualizar pedido: " + error.message);
        } else {
          store.resetOrder();
-         setEditingPedidoId(null);
          fetchPedidosRecientes();
          alert("¡Pedido actualizado en cocina!");
        }
@@ -122,7 +127,7 @@ export default function Ventas() {
   };
 
   const cargarParaEdicion = (p: any) => {
-     setEditingPedidoId(p.id);
+     store.setEditingPedidoId(p.id);
      useOrderStore.setState({
        responsable: p.responsable_id ? clientes.find(c => c.id === p.responsable_id) || null : null,
        beneficiario: p.beneficiario || '',
@@ -154,8 +159,8 @@ export default function Ventas() {
             </button>
           </div>
           <div className="flex gap-2">
-            {editingPedidoId && (
-              <button onClick={() => { setEditingPedidoId(null); store.resetOrder(); }} className="px-4 py-2 bg-red-500/20 text-red-500 font-bold rounded-xl text-sm hover:bg-red-500/40 transition-colors">
+            {store.editingPedidoId && (
+              <button onClick={() => { store.resetOrder(); }} className="px-4 py-2 bg-red-500/20 text-red-500 font-bold rounded-xl text-sm hover:bg-red-500/40 transition-colors">
                  Cancelar Edición
               </button>
             )}
@@ -169,7 +174,7 @@ export default function Ventas() {
           <div className="mb-8 p-4 bg-black/40 border border-neutral-800 rounded-2xl">
             <h3 className="text-lg font-bold text-orange-400 mb-4 flex items-center gap-2"><Pencil size={18}/> Editar Menú Local</h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                <div>
                   <h4 className="text-sm text-neutral-500 mb-2">Proteínas</h4>
                   <div className="flex flex-wrap gap-2 mb-2">
@@ -227,6 +232,31 @@ export default function Ventas() {
                     <div className="flex gap-1">
                       <input type="number" value={newExtraPrecio} onChange={e => setNewExtraPrecio(e.target.value)} className="w-full bg-neutral-900 border border-neutral-700 rounded p-1 text-sm outline-none text-white" placeholder="Valor ($)..." />
                       <button onClick={() => { if(newExtra && newExtraPrecio) { store.setMenuConfig({ extras: [...store.menuConfig.extras, { nombre: newExtra, precio: Number(newExtraPrecio) }] }); setNewExtra(''); setNewExtraPrecio(''); } }} className="bg-neutral-800 px-2 rounded font-bold hover:bg-neutral-700">+</button>
+                    </div>
+                  </div>
+               </div>
+               <div>
+                  <h4 className="text-sm text-neutral-500 mb-2">Snacks (Venta Directa)</h4>
+                  <div className="flex flex-col gap-2 mb-2">
+                    {store.menuConfig.snacks?.map(s => (
+                       <span key={s.nombre} className="text-xs bg-neutral-800 px-2 py-1 rounded flex items-center justify-between">
+                          <span>{s.nombre} (${s.precio})</span>
+                          <button className="text-red-400 font-bold ml-1 hover:text-red-300" onClick={() => store.setMenuConfig({ snacks: store.menuConfig.snacks.filter(x => x.nombre !== s.nombre) })}>x</button>
+                       </span>
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <input type="text" id="newSnackName" className="w-full bg-neutral-900 border border-neutral-700 rounded p-1 text-sm outline-none text-white" placeholder="Snack..." />
+                    <div className="flex gap-1">
+                      <input type="number" id="newSnackPrice" className="w-full bg-neutral-900 border border-neutral-700 rounded p-1 text-sm outline-none text-white" placeholder="Valor ($)..." />
+                      <button onClick={() => {
+                         const nameInput = document.getElementById('newSnackName') as HTMLInputElement;
+                         const priceInput = document.getElementById('newSnackPrice') as HTMLInputElement;
+                         if(nameInput.value && priceInput.value) {
+                            store.setMenuConfig({ snacks: [...(store.menuConfig.snacks || []), { nombre: nameInput.value, precio: Number(priceInput.value), desc: '' }] });
+                            nameInput.value = ''; priceInput.value = '';
+                         }
+                      }} className="bg-neutral-800 px-2 rounded font-bold hover:bg-neutral-700">+</button>
                     </div>
                   </div>
                </div>
@@ -310,18 +340,28 @@ export default function Ventas() {
           <div className="py-6">
              <h3 className="text-lg font-semibold text-neutral-400 mb-6 uppercase tracking-wider text-sm">Snacks, Postres y Bebidas Individuales</h3>
              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {store.menuConfig.extras.map(snack => {
-                   const isSelected = store.detalle.proteina === snack.nombre && store.detalle.acompanamientos.length === 0 && !store.detalle.sopa;
+                {store.menuConfig.snacks?.map(snack => {
+                   const qty = snackQtys[snack.nombre] || 1;
+                   const nameWithQty = qty > 1 ? `${qty}x ${snack.nombre}` : snack.nombre;
+                   const totalPrice = snack.precio * qty;
+                   const isSelected = store.detalle.proteina === nameWithQty && store.detalle.acompanamientos.length === 0 && !store.detalle.sopa;
+                   
                    return (
                      <div key={snack.nombre} className={`p-4 rounded-3xl transition-all border-2 text-center shadow-xl flex flex-col items-center ${isSelected ? 'bg-cyan-500/20 border-cyan-400 shadow-cyan-500/10' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'}`}>
-                       <p className={`font-black text-xl mb-1 ${isSelected ? 'text-cyan-400' : 'text-cyan-400'}`}>{snack.nombre}</p>
-                       <p className="text-2xl font-black text-white my-3">${snack.precio.toLocaleString()}</p>
+                       <p className={`font-black text-xl mb-1 ${isSelected ? 'text-cyan-400' : 'text-white'}`}>{snack.nombre}</p>
+                       <p className="text-sm opacity-70 mb-3 text-neutral-400">{snack.desc || `$${snack.precio.toLocaleString()} c/u`}</p>
                        
+                       <div className="flex items-center gap-4 bg-neutral-900 rounded-xl p-1 mb-4">
+                         <button onClick={() => updateSnackQty(snack.nombre, -1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">-</button>
+                         <span className="font-bold text-lg w-4 text-white text-center">{qty}</span>
+                         <button onClick={() => updateSnackQty(snack.nombre, 1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">+</button>
+                       </div>
+
                        <button 
-                         onClick={() => store.setSnackDirecto(snack.nombre, snack.precio)}
+                         onClick={() => store.setSnackDirecto(nameWithQty, totalPrice)}
                          className={`w-full py-3 rounded-xl font-bold transition-colors ${isSelected ? 'bg-cyan-500 text-white' : 'bg-neutral-900 text-cyan-400 border border-cyan-900/50 hover:bg-neutral-800'}`}
                        >
-                         {isSelected ? 'Seleccionado' : 'Vender Directamente'}
+                         {isSelected ? 'Seleccionado' : 'Vender'} (${totalPrice.toLocaleString()})
                        </button>
                      </div>
                    );
@@ -455,8 +495,8 @@ export default function Ventas() {
           <button 
             onClick={handleSubmit}  
             disabled={saving || !store.detalle.proteina}
-            className={`w-full mt-6 py-4 rounded-2xl text-lg font-bold text-white transition-all active:scale-95 shadow-xl disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editingPedidoId ? 'bg-gradient-to-r from-blue-500 to-blue-600 shadow-blue-500/20' : 'bg-gradient-to-r from-orange-500 to-red-600 shadow-orange-500/20'}`}>
-            {saving ? 'Guardando...' : (editingPedidoId ? 'Actualizar Pedido' : 'Enviar a Cocina')}
+            className={`w-full mt-6 py-4 rounded-2xl text-lg font-bold text-white transition-all active:scale-95 shadow-xl disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2 ${store.editingPedidoId ? 'bg-gradient-to-r from-blue-500 to-blue-600 shadow-blue-500/20' : 'bg-gradient-to-r from-orange-500 to-red-600 shadow-orange-500/20'}`}>
+            {saving ? 'Guardando...' : (store.editingPedidoId ? 'Actualizar Pedido' : 'Enviar a Cocina')}
           </button>
         </div>
 

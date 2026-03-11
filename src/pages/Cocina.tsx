@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2 } from 'lucide-react';
-import { type Pedido } from '../store/orderStore';
+import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2, PenLine } from 'lucide-react';
+import { type Pedido, useOrderStore } from '../store/orderStore';
+import { useNavigate } from 'react-router-dom';
 
 export default function Cocina() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const navigate = useNavigate();
   // Estados para la edición rápida
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -81,6 +83,21 @@ export default function Cocina() {
     if(!valor.trim()) return setEditingId(null);
     await supabase.from('pedidos').update({ [prop]: valor }).eq('id', id);
     setEditingId(null);
+  };
+
+  const editarEnVentas = async (p: Pedido) => {
+     // Buscamos el cliente para pasarlo al store
+     const { data: clienteData } = await supabase.from('clientes').select('*').eq('id', p.responsable_id || '').single();
+     
+     useOrderStore.setState({ editingPedidoId: p.id! });
+     useOrderStore.setState({
+       responsable: clienteData ? clienteData : null,
+       beneficiario: p.beneficiario || '',
+       detalle: p.detalle,
+       valorBase: p.valor,
+       precioManual: true
+     });
+     navigate('/');
   };
 
   // Cálculos del Dashboard
@@ -208,7 +225,14 @@ export default function Cocina() {
                       <span className="text-xs text-neutral-500 block">{hora}</span>
                     </div>
                   </div>
-                  <button onClick={() => eliminarPedido(p.id!)} className="text-neutral-600 p-1 hover:text-red-500 bg-neutral-800 rounded-lg"><Trash2 size={18}/></button>
+                  <div className="flex items-center gap-2">
+                    {pendientes && (
+                       <button onClick={() => editarEnVentas(p)} className="text-neutral-500 p-2 hover:text-amber-400 bg-neutral-800 rounded-lg transition-colors flex items-center justify-center" title="Editar Pedido">
+                          <PenLine size={16} />
+                       </button>
+                    )}
+                    <button onClick={() => eliminarPedido(p.id!)} className="text-neutral-600 p-2 hover:text-red-500 bg-neutral-800 rounded-lg transition-colors" title="Eliminar"><Trash2 size={16}/></button>
+                  </div>
                 </div>
 
                 <div className="flex-1 text-neutral-300 space-y-3 mb-6">

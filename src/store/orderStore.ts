@@ -32,6 +32,7 @@ export type MenuConfig = {
   acompanamientos: string[];
   sopas: string[];
   extras: { nombre: string, precio: number }[];
+  snacks: { nombre: string, precio: number, desc?: string }[];
 };
 
 interface OrderState {
@@ -53,6 +54,9 @@ interface OrderState {
   fetchMenuConfig: () => Promise<void>;
   setMenuConfig: (config: Partial<MenuConfig>) => Promise<void>;
   resetOrder: () => void;
+  
+  editingPedidoId: string | null;
+  setEditingPedidoId: (id: string | null) => void;
 }
 
 const initialState = {
@@ -66,6 +70,7 @@ const initialState = {
   },
   valorBase: 0,
   precioManual: false,
+  editingPedidoId: null,
 };
 
 const defaultMenuConfig: MenuConfig = {
@@ -78,6 +83,11 @@ const defaultMenuConfig: MenuConfig = {
     { nombre: 'Boli', precio: 1000 },
     { nombre: 'Porción Extra', precio: 5000 },
     { nombre: 'Bebida', precio: 2500 }
+  ],
+  snacks: [
+    { nombre: 'Boli', precio: 1000, desc: 'Cualquier sabor' },
+    { nombre: 'Helado Pequeño', precio: 2000, desc: 'Vaso/Paleta 2K' },
+    { nombre: 'Helado Grande', precio: 3000, desc: 'Vaso/Paleta 3K' }
   ]
 };
 
@@ -85,9 +95,12 @@ const savedMenuConfig = localStorage.getItem('pedidapp_menu_config');
 const parsedConfig = savedMenuConfig ? JSON.parse(savedMenuConfig) : null;
 const initialMenuConfig = parsedConfig ? { ...defaultMenuConfig, ...parsedConfig } : defaultMenuConfig;
 
-// Asegurar que si en el caché antiguo no existía 'extras', se agregue el por defecto
+// Asegurar que si en el caché antiguo no existía 'extras' o 'snacks', se agreguen
 if (!initialMenuConfig.extras) {
   initialMenuConfig.extras = defaultMenuConfig.extras;
+}
+if (!initialMenuConfig.snacks) {
+  initialMenuConfig.snacks = defaultMenuConfig.snacks;
 }
 
 const calcularPrecio = (proteina: string | null, sopa: string | null, acompanamientos: string[], manualPrice: boolean, currentValor: number) => {
@@ -203,11 +216,14 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     }]);
   },
 
+  setEditingPedidoId: (id) => set({ editingPedidoId: id }),
+
   resetOrder: () => set({
     responsable: null,
     beneficiario: '',
     detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
     valorBase: 0,
     precioManual: false,
+    editingPedidoId: null
   })
 }));
