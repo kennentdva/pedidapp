@@ -49,6 +49,7 @@ interface OrderState {
   setSopa: (s: string | null) => void;
   toggleExtra: (e: string, precio: number) => void;
   setValorBase: (v: number) => void;
+  setSnackDirecto: (snackName: string, precio: number) => void;
   fetchMenuConfig: () => Promise<void>;
   setMenuConfig: (config: Partial<MenuConfig>) => Promise<void>;
   resetOrder: () => void;
@@ -68,11 +69,13 @@ const initialState = {
 };
 
 const defaultMenuConfig: MenuConfig = {
-  proteinas: ['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa'],
+  proteinas: ['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa', 'Arroz con Pollo Pequeño', 'Arroz con Pollo Mediano', 'Arroz Cubano Pequeño', 'Arroz Cubano Mediano'],
   acompanamientos: ['Arroz', 'Ensalada', 'Papas', 'Patacón', 'Frijol'],
   sopas: ['Sopa del Día', 'Crema de Tomate', 'Sancocho'],
   extras: [
-    { nombre: 'Helado', precio: 3000 },
+    { nombre: 'Helado Pequeño', precio: 2000 },
+    { nombre: 'Helado Grande', precio: 3000 },
+    { nombre: 'Boli', precio: 1000 },
     { nombre: 'Porción Extra', precio: 5000 },
     { nombre: 'Bebida', precio: 2500 }
   ]
@@ -93,6 +96,18 @@ const calcularPrecio = (proteina: string | null, sopa: string | null, acompanami
      if (acompanamientos.includes('Arroz')) return 8000;
      return 4000;
   }
+  
+  // Lógica para Arroces Especiales Pequeños
+  if (proteina === 'Arroz con Pollo Pequeño' || proteina === 'Arroz Cubano Pequeño') {
+     return sopa ? 8000 : 5000; // 5.000 + 3.000 sopa
+  }
+  
+  // Lógica para Arroces Especiales Medianos/Grandes
+  if (proteina === 'Arroz con Pollo Mediano' || proteina === 'Arroz Cubano Mediano') {
+     return sopa ? 13000 : 10000; // 10.000 + 3.000 sopa
+  }
+
+  // Precios estandar
   if (proteina && sopa) return 15000;
   if (proteina && !sopa) return 13000;
   return 0;
@@ -154,6 +169,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   }),
 
   setValorBase: (v) => set({ valorBase: v, precioManual: true }),
+  
+  setSnackDirecto: (snackName: string, precio: number) => set({
+     precioManual: true,
+     valorBase: precio,
+     detalle: { proteina: snackName, acompanamientos: [], sopa: null, extras: [] }
+  }),
 
   fetchMenuConfig: async () => {
     const { data } = await supabase.from('clientes').select('nombre').eq('id', MENU_CONFIG_ID).single();

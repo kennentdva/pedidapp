@@ -99,7 +99,12 @@ export default function Despacho() {
     p.beneficiario?.toLowerCase().includes(searchTerm.toLowerCase())
   );
   
-  const listosParaEntregar = pedidosFiltrados.filter(p => p.estado_cocina === 'empacado' && p.estado_entrega === 'en_espera');
+  const esSnackDirecto = (p: Pedido) => p.detalle.acompanamientos.length === 0 && !p.detalle.sopa && p.detalle.proteina && !['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa', 'Arroz con Pollo Pequeño', 'Arroz con Pollo Mediano', 'Arroz Cubano Pequeño', 'Arroz Cubano Mediano'].includes(p.detalle.proteina);
+
+  const pedidosRestaurante = pedidosFiltrados.filter(p => !esSnackDirecto(p));
+  const pedidosSnacks = pedidosFiltrados.filter(p => esSnackDirecto(p));
+  
+  const listosParaEntregar = pedidosRestaurante.filter(p => p.estado_cocina === 'empacado' && p.estado_entrega === 'en_espera');
 
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
@@ -195,7 +200,7 @@ export default function Despacho() {
           {/* Historial Auditoría del día */}
           <div>
             <h3 className="text-lg uppercase tracking-wider font-bold text-neutral-400 mb-4 ml-2">
-              📜 Historial del Día ({pedidosFiltrados.length})
+              📜 Historial de Restaurante ({pedidosRestaurante.length})
             </h3>
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
                <div className="overflow-x-auto">
@@ -228,7 +233,7 @@ export default function Despacho() {
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-neutral-800">
-                     {pedidosFiltrados.map(p => {
+                     {pedidosRestaurante.map(p => {
                        const ptg = p.pagado ? 'text-blue-400' : 'text-orange-400';
                        const cocinaColor = p.estado_cocina === 'empacado' ? 'text-emerald-400' : p.estado_cocina === 'pendiente' ? 'text-yellow-400' : 'text-red-400';
                        return (
@@ -333,7 +338,7 @@ export default function Despacho() {
                          </tr>
                        );
                      })}
-                     {pedidosFiltrados.length === 0 && (
+                     {pedidosRestaurante.length === 0 && (
                        <tr>
                          <td colSpan={7} className="px-6 py-12 text-center text-neutral-500">
                            No hay registros en esta fecha.
@@ -345,6 +350,129 @@ export default function Despacho() {
                </div>
             </div>
           </div>
+
+          {/* Historial Auditoría de Snacks (Ventas Directas) */}
+          {pedidosSnacks.length > 0 && (
+            <div className="mt-8">
+              <h3 className="text-lg uppercase tracking-wider font-bold text-cyan-400 mb-4 ml-2 flex items-center gap-2">
+                🍦 Historial de Snacks y Extras ({pedidosSnacks.length})
+              </h3>
+              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
+                 <div className="overflow-x-auto">
+                   <table className="min-w-full divide-y divide-neutral-800">
+                     <thead className="bg-neutral-800">
+                       <tr>
+                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                           Beneficiario
+                         </th>
+                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                           Snack / Extra
+                         </th>
+                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                           Responsable
+                         </th>
+                         <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                           Valor / Pago
+                         </th>
+                         <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-neutral-400 uppercase tracking-wider">
+                           Acciones
+                         </th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-neutral-800">
+                       {pedidosSnacks.map(p => {
+                         const ptg = p.pagado ? 'text-blue-400' : 'text-orange-400';
+                         return (
+                           <tr key={p.id} className="hover:bg-neutral-800 transition-colors">
+                             <td className="px-6 py-4 whitespace-nowrap">
+                               {editingId === p.id ? (
+                                 <input
+                                   type="text"
+                                   value={editName}
+                                   onChange={(e) => setEditName(e.target.value)}
+                                   onBlur={() => guardarEdicion(p.id!)}
+                                   onKeyDown={(e) => {
+                                     if (e.key === 'Enter') guardarEdicion(p.id!);
+                                     if (e.key === 'Escape') setEditingId(null);
+                                   }}
+                                   className="bg-neutral-700 text-white rounded-md px-2 py-1 w-full"
+                                   autoFocus
+                                 />
+                               ) : (
+                                 <div className="flex items-center gap-2">
+                                   <span className="font-medium text-white">{p.beneficiario || 'Cliente Directo'}</span>
+                                   {isToday && (
+                                     <button onClick={() => { setEditingId(p.id!); setEditName(p.beneficiario || ''); }} className="text-neutral-500 hover:text-blue-400">
+                                       <Edit2 size={16} />
+                                     </button>
+                                   )}
+                                 </div>
+                               )}
+                             </td>
+                             <td className="px-6 py-4 whitespace-nowrap">
+                               <div className="text-sm font-bold text-cyan-400">{p.detalle.proteina}</div>
+                               {p.detalle.nota && (
+                                 <div className="text-[11px] text-yellow-400 italic mt-1 max-w-[200px] truncate" title={p.detalle.nota}>
+                                   ⚠️ Nota: {p.detalle.nota}
+                                 </div>
+                               )}
+                             </td>
+                             <td className="px-6 py-4 whitespace-nowrap text-neutral-400" title={clientes.find(c => c.id === p.responsable_id)?.nombre || 'Sin Cuenta (Efectivo)'}>
+                               <select 
+                                 className="bg-neutral-800 border border-neutral-700 rounded p-1 text-xs outline-none text-neutral-300 focus:border-blue-500 max-w-[120px] truncate"
+                                 value={p.responsable_id || 'null'}
+                                 onChange={(e) => asignarResponsable(p.id!, e.target.value)}
+                               >
+                                 <option value="null">Sin Cuenta (Efectivo)</option>
+                                 {clientes.map(c => (
+                                   <option key={c.id} value={c.id}>{c.nombre}</option>
+                                 ))}
+                               </select>
+                             </td>
+                             <td className={`px-6 py-4 font-bold ${ptg}`}>
+                               {editingPrecioId === p.id ? (
+                                 <input 
+                                   type="number"
+                                   className="w-20 bg-neutral-800 text-white rounded px-1 text-sm font-bold border border-blue-500"
+                                   value={nuevoPrecio}
+                                   onChange={e => setNuevoPrecio(e.target.value)}
+                                   autoFocus
+                                   onBlur={() => guardarNuevoPrecio(p.id!)}
+                                   onKeyDown={e => e.key === 'Enter' && guardarNuevoPrecio(p.id!)}
+                                 />
+                               ) : (
+                                 <div 
+                                   className="cursor-pointer hover:text-blue-400"
+                                   onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}
+                                 >
+                                   ${p.valor.toLocaleString()}
+                                 </div>
+                               )}
+                               {isToday && (
+                                 <button 
+                                   onClick={() => togglePagado(p)}
+                                   className={`mt-1 px-2 py-0.5 rounded text-[10px] uppercase font-bold transition-colors ${p.pagado ? 'bg-blue-500/20 text-blue-400 hover:bg-neutral-800' : 'bg-orange-500/20 text-orange-400 hover:bg-orange-500 hover:text-white'}`}>
+                                   {p.pagado ? 'Pagado (Deshacer)' : 'Cobrar Ahora'}
+                                 </button>
+                               )}
+                               {!isToday && !p.pagado && <span className="text-orange-500 text-xs">(Deuda)</span>}
+                             </td>
+                             <td className="px-6 py-4 text-right whitespace-nowrap">
+                               {isToday && (
+                                 <button onClick={() => eliminarPedido(p.id!)} className="text-neutral-500 hover:text-red-500 transition-colors" title="Eliminar Pedido">
+                                   <Trash2 size={20} />
+                                 </button>
+                               )}
+                             </td>
+                           </tr>
+                         );
+                       })}
+                     </tbody>
+                   </table>
+                 </div>
+              </div>
+            </div>
+          )}
 
         </div>
       )}

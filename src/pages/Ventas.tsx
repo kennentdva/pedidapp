@@ -13,16 +13,8 @@ export default function Ventas() {
   const [nuevoCliente, setNuevoCliente] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'Restaurante' | 'Snacks'>('Restaurante');
-  const [snackQtys, setSnackQtys] = useState<Record<string, number>>({});
   const [pedidosRecientes, setPedidosRecientes] = useState<any[]>([]);
   const [editingPedidoId, setEditingPedidoId] = useState<string | null>(null);
-
-  const updateSnackQty = (snack: string, delta: number) => {
-     setSnackQtys(prev => ({
-        ...prev,
-        [snack]: Math.max(1, (prev[snack] || 1) + delta)
-     }));
-  };
 
   // Estados locales para la edición del menú
   const [newProteina, setNewProteina] = useState('');
@@ -81,12 +73,18 @@ export default function Ventas() {
     }
     
     setSaving(true);
+
+    // Determinar si es un snack o un menú. 
+    // Un snack base es un "extra" que se vende de manera individual, por lo que su nombre de proteína coincide con un extra, sin acompañamientos ni sopa, 
+    // y para este caso: activeTab puede que sea Snacks, por lo que el estado de cocina pasaría directamente a empacado.
+    const esSnackDirecto = store.menuConfig.extras.some(e => store.detalle.proteina?.includes(e.nombre)) && store.detalle.acompanamientos.length === 0 && !store.detalle.sopa;
+
     const orderData = {
       responsable_id: store.responsable?.id || null,
       beneficiario: store.beneficiario.trim(),
       detalle: store.detalle,
       valor: store.valorBase,
-      estado_cocina: 'pendiente',
+      estado_cocina: esSnackDirecto ? 'empacado' : 'pendiente',
       estado_entrega: 'en_espera',
       pagado: false
     };
@@ -310,40 +308,20 @@ export default function Ventas() {
           </div>
         ) : (
           <div className="py-6">
-             <h3 className="text-lg font-semibold text-neutral-400 mb-6 uppercase tracking-wider text-sm">Selecciona un Snack</h3>
+             <h3 className="text-lg font-semibold text-neutral-400 mb-6 uppercase tracking-wider text-sm">Snacks, Postres y Bebidas Individuales</h3>
              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {[
-                  { nombre: 'Boli', precio: 1000, desc: 'Cualquier sabor' },
-                  { nombre: 'Helado Pequeño', precio: 2000, desc: 'Vaso/Paleta 2K' },
-                  { nombre: 'Helado Grande', precio: 3000, desc: 'Vaso/Paleta 3K' }
-                ].map(snack => {
-                   const qty = snackQtys[snack.nombre] || 1;
-                   const nameWithQty = qty > 1 ? `${qty}x ${snack.nombre}` : snack.nombre;
-                   const totalPrice = snack.precio * qty;
-                   const isSelected = store.detalle.proteina === nameWithQty && store.valorBase === totalPrice;
-                   
+                {store.menuConfig.extras.map(snack => {
+                   const isSelected = store.detalle.proteina === snack.nombre && store.detalle.acompanamientos.length === 0 && !store.detalle.sopa;
                    return (
                      <div key={snack.nombre} className={`p-4 rounded-3xl transition-all border-2 text-center shadow-xl flex flex-col items-center ${isSelected ? 'bg-cyan-500/20 border-cyan-400 shadow-cyan-500/10' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'}`}>
                        <p className={`font-black text-xl mb-1 ${isSelected ? 'text-cyan-400' : 'text-cyan-400'}`}>{snack.nombre}</p>
-                       <p className="text-xs opacity-70 mb-3 text-neutral-300">{snack.desc}</p>
+                       <p className="text-2xl font-black text-white my-3">${snack.precio.toLocaleString()}</p>
                        
-                       <div className="flex items-center gap-4 bg-neutral-900 rounded-xl p-1 mb-4">
-                         <button onClick={() => updateSnackQty(snack.nombre, -1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">-</button>
-                         <span className="font-bold text-lg w-4 text-white">{qty}</span>
-                         <button onClick={() => updateSnackQty(snack.nombre, 1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">+</button>
-                       </div>
-
                        <button 
-                         onClick={() => {
-                            useOrderStore.setState({
-                               detalle: { proteina: nameWithQty, acompanamientos: [], sopa: null, extras: [] },
-                               valorBase: totalPrice,
-                               precioManual: true
-                            });
-                         }}
-                         className={`w-full py-3 rounded-xl font-bold transition-colors ${isSelected ? 'bg-cyan-500 text-white' : 'bg-neutral-900 text-cyan-400 border border-cyan-900/50'}`}
+                         onClick={() => store.setSnackDirecto(snack.nombre, snack.precio)}
+                         className={`w-full py-3 rounded-xl font-bold transition-colors ${isSelected ? 'bg-cyan-500 text-white' : 'bg-neutral-900 text-cyan-400 border border-cyan-900/50 hover:bg-neutral-800'}`}
                        >
-                         {isSelected ? 'Seleccionado' : 'Seleccionar'} (${totalPrice.toLocaleString()})
+                         {isSelected ? 'Seleccionado' : 'Vender Directamente'}
                        </button>
                      </div>
                    );
@@ -352,7 +330,7 @@ export default function Ventas() {
              
              <div className="mt-8 bg-blue-950/20 border border-blue-900/50 p-4 rounded-xl">
                 <p className="text-sm text-blue-400 font-medium">
-                  💡 <b>Tip:</b> Si el cliente pide un almuerzo Y un boli, lo más fácil es seleccionarlo como 'Adicional' en el Restaurante. Si piden SOLO un boli, usa esta pestaña para enviar un reporte rápido a cuentas.
+                  💡 <b>Tip:</b> Si el cliente pide un almuerzo Y un boli, lo más fácil es seleccionarlo como 'Adicional' en la pestaña <b>Restaurante</b>. Si piden SOLO un boli o helado suelto, usa esta pestaña para enviarlo directamente a <b>Despacho</b> sin pasar por la cola de Cocina.
                 </p>
              </div>
           </div>
