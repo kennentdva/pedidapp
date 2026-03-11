@@ -123,26 +123,46 @@ export default function Cocina() {
     return acc;
   }, {} as Record<string, number>);
 
+  // Cálculo global del día (sin importar estado)
+  const totalSopas = pedidos.filter(p => p.detalle?.sopa).length;
+  const totalProteinas = pedidos.reduce((acc, p) => {
+    const prot = p.detalle?.proteina;
+    if (prot && prot !== 'Solo Sopa') acc += 1;
+    return acc;
+  }, 0);
+
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
       
       {/* Dashboard Top */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6 w-full">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col items-center justify-center text-center">
-           <Flame size={20} className="text-orange-500 mb-1" />
-           <span className="text-xs uppercase tracking-widest font-semibold mb-1 text-neutral-400">Total Hoy</span>
-           <span className="text-2xl font-black text-white">{totalHoy}</span>
-        </div>
-        <div className="bg-neutral-900 border border-emerald-900/50 rounded-3xl p-4 shadow-xl flex flex-col items-center justify-center text-center">
-           <Check size={20} className="text-emerald-500 mb-1" />
-           <span className="text-xs uppercase tracking-widest font-semibold mb-1 text-neutral-400">Terminados</span>
-           <span className="text-2xl font-black text-emerald-400">{yaEmpacados}</span>
-        </div>
-        <div className="bg-neutral-900 border border-red-900/50 rounded-3xl p-4 shadow-xl flex flex-col items-center justify-center text-center">
-           <Clock size={20} className="text-red-500 mb-1" />
-           <span className="text-xs uppercase tracking-widest font-semibold mb-1 text-neutral-400">Por Hacer</span>
-           <span className="text-2xl font-black text-red-400">{faltaEmpacar}</span>
-        </div>
+      <h3 className="text-sm uppercase tracking-widest font-bold text-neutral-500 ml-2">Vista General de Producción (Hoy)</h3>
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3 mb-2 w-full">
+         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Total Proteínas</span>
+            <span className="text-xl font-black text-orange-400">{totalProteinas}</span>
+         </div>
+         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Total Sopas</span>
+            <span className="text-xl font-black text-amber-500">{totalSopas}</span>
+         </div>
+         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Flame size={16} className="text-orange-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Platos Totales</span>
+            <span className="text-xl font-black text-white">{totalHoy}</span>
+         </div>
+         <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Check size={16} className="text-emerald-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Terminados</span>
+            <span className="text-xl font-black text-emerald-400">{yaEmpacados}</span>
+         </div>
+         <div className="bg-neutral-900 border border-red-900/50 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Clock size={16} className="text-red-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Por Hacer</span>
+            <span className="text-xl font-black text-red-400">{faltaEmpacar}</span>
+         </div>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full border-b border-neutral-800 pb-4">
         <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-neutral-800 pb-1">Faltan por preparar</span>
            <div className="flex flex-wrap gap-2 justify-center content-center pt-1">

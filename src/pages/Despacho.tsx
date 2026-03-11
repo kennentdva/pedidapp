@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Truck, Calendar, Trash2, Edit2, Search, CheckSquare } from 'lucide-react';
-import { type Pedido } from '../store/orderStore';
+import { Truck, Calendar, Trash2, Edit2, Search, CheckSquare, Plus, X, Flame } from 'lucide-react';
+import { type Pedido, useOrderStore } from '../store/orderStore';
 
 export default function Despacho() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -15,6 +15,11 @@ export default function Despacho() {
   const [editName, setEditName] = useState('');
   const [editingPrecioId, setEditingPrecioId] = useState<string | null>(null);
   const [nuevoPrecio, setNuevoPrecio] = useState<number | string>('');
+
+  const [showExtraModal, setShowExtraModal] = useState(false);
+  const [extraProteina, setExtraProteina] = useState('');
+  const [extraSopa, setExtraSopa] = useState('');
+  const menuConfig = useOrderStore(state => state.menuConfig);
 
   useEffect(() => {
     fetchPedidosPorFecha();
@@ -93,6 +98,39 @@ export default function Despacho() {
     fetchPedidosPorFecha();
   };
 
+  const crearPorcionExtra = async () => {
+    if (!extraProteina) return alert('Debes seleccionar al menos la proteína.');
+    
+    // Extraer precio
+    let precioEstimado = 14000; // Asumir valor base para porciones extra por defecto
+
+    const nuevoPedido = {
+      beneficiario: 'Porción Extra (Stock)',
+      detalle: {
+        proteina: extraProteina,
+        sopa: extraSopa === 'Sin Sopa' ? null : extraSopa,
+        acompanamientos: [],
+        cantidades: {},
+        nota: 'Creado en Despacho', // Para indicar que fue un extra
+        esSnack: false
+      },
+      valor: precioEstimado,
+      pagado: false,
+      estado_cocina: 'empacado',
+      estado_entrega: 'en_espera'
+    };
+
+    const { error } = await supabase.from('pedidos').insert([nuevoPedido]);
+    if (!error) {
+      setShowExtraModal(false);
+      setExtraProteina('');
+      setExtraSopa('');
+      fetchPedidosPorFecha();
+    } else {
+      alert('Error al crear porción extra');
+    }
+  };
+
   const isToday = fecha === new Date().toISOString().split('T')[0];
   
   const pedidosFiltrados = pedidos.filter(p => 
@@ -105,6 +143,11 @@ export default function Despacho() {
   const pedidosSnacks = pedidosFiltrados.filter(p => esSnackDirecto(p));
   
   const listosParaEntregar = pedidosRestaurante.filter(p => p.estado_cocina === 'empacado' && p.estado_entrega === 'en_espera');
+
+  // Cálculos Dashboard Despacho
+  const totalDespachar = pedidosRestaurante.length;
+  const entregados = pedidosRestaurante.filter(p => p.estado_entrega === 'entregado').length;
+  const porEntregar = totalDespachar - entregados;
 
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
@@ -150,10 +193,39 @@ export default function Despacho() {
       ) : (
         <div className="flex flex-col gap-6 w-full max-w-5xl mx-auto pb-20 md:pb-0">
           
+          {/* Dashboard Despacho (Totales) */}
+          {isToday && (
+            <div className="grid grid-cols-3 gap-3 w-full">
+               <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center">
+                  <Flame size={18} className="text-blue-500 mb-1" />
+                  <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Total a Despachar</span>
+                  <span className="text-2xl font-black text-white">{totalDespachar}</span>
+               </div>
+               <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center">
+                  <CheckSquare size={18} className="text-emerald-500 mb-1" />
+                  <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Entregados</span>
+                  <span className="text-2xl font-black text-emerald-400">{entregados}</span>
+               </div>
+               <div className="bg-neutral-900 border border-red-900/50 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center">
+                  <Truck size={18} className="text-orange-500 mb-1" />
+                  <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Por Entregar</span>
+                  <span className="text-2xl font-black text-orange-400">{porEntregar}</span>
+               </div>
+            </div>
+          )}
+
           {/* Seccion de Pedidos por Entregar (Sólo HOY y Empacados) */}
           {isToday && (
             <div className="mb-6">
-              <h3 className="text-lg uppercase tracking-wider font-bold text-neutral-400 mb-4 ml-2">⏳ Listos Para Entregar ({listosParaEntregar.length})</h3>
+              <div className="flex justify-between items-center mb-4 ml-2">
+                <h3 className="text-lg uppercase tracking-wider font-bold text-neutral-400">⏳ Listos Para Entregar ({listosParaEntregar.length})</h3>
+                <button 
+                  onClick={() => setShowExtraModal(true)}
+                  className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg transition-transform hover:scale-105"
+                >
+                  <Plus size={16} /> Añadir Porción Extra
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {listosParaEntregar.map(p => (
                   <div key={p.id} className="bg-emerald-950/20 border border-emerald-900/50 rounded-2xl p-4 flex justify-between items-center bg-gradient-to-r hover:from-emerald-900/20 transition-all shadow-xl shadow-emerald-900/5">
@@ -474,6 +546,58 @@ export default function Despacho() {
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* Modal Añadir Porción Extra */}
+      {showExtraModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md p-6 shadow-2xl relative animate-fade-in">
+            <button onClick={() => setShowExtraModal(false)} className="absolute top-4 right-4 text-neutral-500 hover:text-white transition-colors">
+              <X size={24} />
+            </button>
+            <h2 className="text-2xl font-black text-white mb-6">Añadir Porción Extra</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-neutral-400 mb-2 uppercase tracking-wide">Proteína <span className="text-red-500">*</span></label>
+                <select 
+                  className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 outline-none border border-neutral-800 focus:border-blue-500"
+                  value={extraProteina}
+                  onChange={(e) => setExtraProteina(e.target.value)}
+                >
+                  <option value="">Seleccione Proteína</option>
+                  {menuConfig.proteinas.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-neutral-400 mb-2 uppercase tracking-wide">Sopa (Opcional)</label>
+                <select 
+                  className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 outline-none border border-neutral-800 focus:border-blue-500"
+                  value={extraSopa}
+                  onChange={(e) => setExtraSopa(e.target.value)}
+                >
+                  <option value="">Seleccione Sopa</option>
+                  <option value="Sin Sopa">Ninguna</option>
+                  {menuConfig.sopas.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-4 border-t border-neutral-800 mt-6">
+                <button 
+                  onClick={crearPorcionExtra}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-xl flex justify-center items-center gap-2 transition-transform hover:scale-105"
+                >
+                  <Plus size={20} /> Crear Extra en Stock
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

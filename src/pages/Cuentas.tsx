@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download, FileText, Check, X, MessageCircle } from 'lucide-react';
+import { Wallet, Search, TrendingDown, CalendarDays, Banknote, DollarSign, Share2, Trash2, Download, FileText, Check, X, MessageCircle, Edit2 } from 'lucide-react';
 import { type Cliente, type Pedido, MENU_CONFIG_ID, useOrderStore } from '../store/orderStore';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -16,6 +16,8 @@ export default function Cuentas() {
   const [deudoresList, setDeudoresList] = useState<{cliente: Cliente, deuda: number}[]>([]);
   const [editingPrecioId, setEditingPrecioId] = useState<string | null>(null);
   const [nuevoPrecio, setNuevoPrecio] = useState<number | string>('');
+  const [editingClientName, setEditingClientName] = useState(false);
+  const [tempClientName, setTempClientName] = useState('');
 
   // Formulario Pago
   const [montoPago, setMontoPago] = useState<number | string>('');
@@ -104,6 +106,17 @@ export default function Cuentas() {
     if (pedidos) setHistorialPedidos(pedidos as Pedido[]);
     if (pagos) setPagosRealizados(pagos);
     setLoading(false);
+  };
+
+  const guardarNombreCliente = async () => {
+    if (!selectedCliente) return;
+    const nuevoNombre = tempClientName.trim() || 'Cliente Sin Nombre';
+    const { error } = await supabase.from('clientes').update({ nombre: nuevoNombre }).eq('id', selectedCliente.id);
+    if (!error) {
+       setSelectedCliente({ ...selectedCliente, nombre: nuevoNombre });
+       fetchClientes(); // Refresh list
+    }
+    setEditingClientName(false);
   };
 
   const calcularDeudaTotal = () => {
@@ -390,7 +403,7 @@ export default function Cuentas() {
     const deuda = calcularDeudaTotal();
     if (deuda <= 0) return alert('Este cliente no tiene deudas pendientes.');
     
-    let texto = `*Restaurante Mayiya*\n\nHola ${selectedCliente.nombre.trim()}, te compartimos tu estado de cuenta a la fecha.\n\n`;
+    let texto = `*Restaurante Mayiya*\n\nHola ${(selectedCliente.nombre || 'Cliente').trim()}, te compartimos tu estado de cuenta a la fecha.\n\n`;
     
     // Solo mostrar los pedidos que sumados superan el monto pagado (desde los más recientes hacia atrás)
     // O de forma más simple según el usuario: Solo mostrar los que no están marcados como pagados formalmente.
@@ -517,7 +530,7 @@ export default function Cuentas() {
     
     const doc = new jsPDF();
     doc.setFontSize(18);
-    doc.text(`Estado de Cuenta: ${selectedCliente.nombre.trim()}`, 14, 22);
+    doc.text(`Estado de Cuenta: ${(selectedCliente.nombre || 'Sin Nombre').trim()}`, 14, 22);
     
     doc.setFontSize(11);
     doc.setTextColor(100);
@@ -578,7 +591,7 @@ export default function Cuentas() {
     doc.setTextColor(220, 38, 38);
     doc.text(`TOTAL DEUDA NETA: $${deuda.toLocaleString()}`, 14, finalY + 5);
 
-    doc.save(`Estado_Cuenta_${selectedCliente.nombre.trim().replace(/\s/g, '_')}.pdf`);
+    doc.save(`Estado_Cuenta_${(selectedCliente.nombre || 'Sin_Nombre').trim().replace(/\s/g, '_')}.pdf`);
   };
 
   const deudaVisible = calcularDeudaTotal();
@@ -617,7 +630,7 @@ export default function Cuentas() {
                     onClick={() => seleccionarCliente(item.cliente)}
                     className="w-full flex justify-between items-center text-left hover:bg-neutral-800 p-2 rounded-xl transition-colors group"
                   >
-                    <span className="text-xs font-bold text-neutral-300 truncate w-3/5" title={item.cliente.nombre}>{item.cliente.nombre}</span>
+                    <span className="text-xs font-bold text-neutral-300 truncate w-3/5" title={item.cliente.nombre}>{item.cliente.nombre || 'Cliente Sin Nombre'}</span>
                     <span className="text-xs font-mono text-red-400 font-bold group-hover:text-red-300 transition-colors">${item.deuda.toLocaleString()}</span>
                   </button>
                 ))}
@@ -655,9 +668,9 @@ export default function Cuentas() {
 
           {!selectedCliente && search && (
              <div className="bg-neutral-950 border border-neutral-800 rounded-xl max-h-60 overflow-y-auto">
-                {clientes.filter(c => c.nombre.toLowerCase().includes(search.toLowerCase())).map(c => (
+                {clientes.filter(c => (c.nombre || '').toLowerCase().includes(search.toLowerCase())).map(c => (
                   <button key={c.id} onClick={() => seleccionarCliente(c)} className="w-full text-left px-4 py-3 hover:bg-neutral-800 border-b border-neutral-800/50 last:border-0">
-                    <span className="font-bold">{c.nombre}</span>
+                    <span className="font-bold">{c.nombre || 'Cliente Sin Nombre'}</span>
                     {c.es_frecuente && <span className="ml-2 text-xs bg-orange-500/20 text-orange-400 px-2 rounded-lg">Frecuente</span>}
                   </button>
                 ))}
@@ -678,8 +691,30 @@ export default function Cuentas() {
         {selectedCliente ? (
           <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 md:p-8 shadow-xl">
               <div className="flex justify-between items-start mb-6">
-                <div>
-                   <h2 className="text-3xl font-black text-white decoration-blue-500 underline decoration-4 underline-offset-4 mb-2">{selectedCliente.nombre}</h2>
+                <div className="flex-1 pr-4">
+                   {editingClientName ? (
+                     <div className="mb-2">
+                       <input
+                         type="text"
+                         autoFocus
+                         className="bg-neutral-800 text-white text-3xl font-black rounded-lg px-2 py-1 outline-none border border-blue-500 w-full max-w-md"
+                         value={tempClientName}
+                         onChange={e => setTempClientName(e.target.value)}
+                         onBlur={guardarNombreCliente}
+                         onKeyDown={e => {
+                           if (e.key === 'Enter') guardarNombreCliente();
+                           if (e.key === 'Escape') setEditingClientName(false);
+                         }}
+                       />
+                     </div>
+                   ) : (
+                     <h2 className="text-3xl font-black text-white decoration-blue-500 underline decoration-4 underline-offset-4 mb-2 flex items-center gap-3 flex-wrap">
+                       {selectedCliente.nombre || 'Cliente Sin Nombre'}
+                       <button onClick={() => { setTempClientName(selectedCliente.nombre || ''); setEditingClientName(true); }} className="text-neutral-500 hover:text-blue-400 transition-colors">
+                         <Edit2 size={24} />
+                       </button>
+                     </h2>
+                   )}
                    <p className="text-neutral-400 font-mono text-sm">ID: {selectedCliente.id.split('-')[0]}...</p>
                 </div>
                  <div className="bg-neutral-950 p-4 border border-neutral-800 rounded-2xl flex flex-col gap-1 min-w-[200px] shadow-2xl relative">
