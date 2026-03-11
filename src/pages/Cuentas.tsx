@@ -52,7 +52,7 @@ export default function Cuentas() {
 
   const fetchDeudaGlobal = async () => {
     // Calculamos la deuda global igual que en el PDF (por cliente, sin dejar saldos negativos)
-    const { data: clientesData } = await supabase.from('clientes').select('id');
+    const { data: clientesData } = await supabase.from('clientes').select('*');
     const { data: pedidosData, error: errP } = await supabase.from('pedidos').select('responsable_id, valor, pagado');
     const { data: pagosData, error: errPag } = await supabase.from('pagos').select('cliente_id, monto, metodo');
     
