@@ -14,6 +14,8 @@ export default function Ventas() {
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'Restaurante' | 'Snacks'>('Restaurante');
   const [snackQtys, setSnackQtys] = useState<Record<string, number>>({});
+  const [pedidosRecientes, setPedidosRecientes] = useState<any[]>([]);
+  const [editingPedidoId, setEditingPedidoId] = useState<string | null>(null);
 
   const updateSnackQty = (snack: string, delta: number) => {
      setSnackQtys(prev => ({
@@ -31,6 +33,7 @@ export default function Ventas() {
 
   useEffect(() => {
     fetchClientes();
+    fetchPedidosRecientes();
   }, []);
 
   const fetchClientes = async () => {
@@ -39,6 +42,18 @@ export default function Ventas() {
        const f = (data as Cliente[]).filter(c => c.id !== MENU_CONFIG_ID);
        setClientes(f);
     }
+  };
+
+  const fetchPedidosRecientes = async () => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0,0,0,0);
+    const { data } = await supabase.from('pedidos')
+      .select('*, clientes(nombre)')
+      .gte('created_at', startOfDay.toISOString())
+      .neq('estado_cocina', 'empacado')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (data) setPedidosRecientes(data);
   };
 
   const crearCliente = async () => {
@@ -76,6 +91,26 @@ export default function Ventas() {
       pagado: false
     };
 
+    if (editingPedidoId) {
+       const { error } = await supabase.from('pedidos').update({
+         responsable_id: orderData.responsable_id,
+         beneficiario: orderData.beneficiario,
+         detalle: orderData.detalle,
+         valor: orderData.valor
+       }).eq('id', editingPedidoId);
+       
+       setSaving(false);
+       if (error) {
+         alert("Error al actualizar pedido: " + error.message);
+       } else {
+         store.resetOrder();
+         setEditingPedidoId(null);
+         fetchPedidosRecientes();
+         alert("¡Pedido actualizado en cocina!");
+       }
+       return;
+    }
+
     const { error } = await supabase.from('pedidos').insert([orderData]);
     setSaving(false);
     
@@ -83,8 +118,21 @@ export default function Ventas() {
       alert("Error al guardar pedido: " + error.message);
     } else {
       store.resetOrder();
+      fetchPedidosRecientes();
       alert("¡Pedido enviado a cocina!");
     }
+  };
+
+  const cargarParaEdicion = (p: any) => {
+     setEditingPedidoId(p.id);
+     useOrderStore.setState({
+       responsable: p.responsable_id ? clientes.find(c => c.id === p.responsable_id) || null : null,
+       beneficiario: p.beneficiario || '',
+       detalle: p.detalle,
+       valorBase: p.valor,
+       precioManual: true
+     });
+     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -107,9 +155,16 @@ export default function Ventas() {
               Bolis y Helados
             </button>
           </div>
-          <button onClick={() => setShowConfig(!showConfig)} className="p-3 bg-neutral-800 text-neutral-400 rounded-xl hover:text-white transition-colors" title="Editar Menú del Día">
-             <Settings2 size={24} />
-          </button>
+          <div className="flex gap-2">
+            {editingPedidoId && (
+              <button onClick={() => { setEditingPedidoId(null); store.resetOrder(); }} className="px-4 py-2 bg-red-500/20 text-red-500 font-bold rounded-xl text-sm hover:bg-red-500/40 transition-colors">
+                 Cancelar Edición
+              </button>
+            )}
+            <button onClick={() => setShowConfig(!showConfig)} className="p-3 bg-neutral-800 text-neutral-400 rounded-xl hover:text-white transition-colors" title="Editar Menú del Día">
+               <Settings2 size={24} />
+            </button>
+          </div>
         </div>
 
         {showConfig && (
@@ -422,10 +477,28 @@ export default function Ventas() {
           <button 
             onClick={handleSubmit}  
             disabled={saving || !store.detalle.proteina}
-            className="w-full mt-6 py-4 rounded-2xl text-lg font-bold text-white transition-all active:scale-95 bg-gradient-to-r from-orange-500 to-red-600 shadow-xl shadow-orange-500/20 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2">
-            {saving ? 'Enviando...' : 'Enviar a Cocina'}
+            className={`w-full mt-6 py-4 rounded-2xl text-lg font-bold text-white transition-all active:scale-95 shadow-xl disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2 ${editingPedidoId ? 'bg-gradient-to-r from-blue-500 to-blue-600 shadow-blue-500/20' : 'bg-gradient-to-r from-orange-500 to-red-600 shadow-orange-500/20'}`}>
+            {saving ? 'Guardando...' : (editingPedidoId ? 'Actualizar Pedido' : 'Enviar a Cocina')}
           </button>
         </div>
+
+        {/* Últimos Pedidos (Edición Rápida) */}
+        {pedidosRecientes.length > 0 && (
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-xl flex-1 flex flex-col mt-2">
+             <h3 className="text-sm font-bold mb-3 border-b border-neutral-800 pb-2 text-neutral-400">📝 Pedidos Recientes (En Cocina)</h3>
+             <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+                {pedidosRecientes.map(p => (
+                   <div key={p.id} onClick={() => cargarParaEdicion(p)} className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl cursor-pointer hover:border-orange-500/50 hover:bg-neutral-800 transition-colors">
+                      <div className="flex justify-between items-start mb-1">
+                         <span className="font-bold text-white text-sm truncate max-w-[150px]">{p.beneficiario}</span>
+                         <span className="text-xs text-orange-400 font-bold">${p.valor}</span>
+                      </div>
+                      <p className="text-xs text-neutral-500 truncate">{p.detalle.proteina} + {p.detalle.acompanamientos.join(', ')}</p>
+                   </div>
+                ))}
+             </div>
+          </div>
+        )}
 
       </div>
     </div>
