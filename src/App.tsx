@@ -8,6 +8,7 @@ import Cuentas from './pages/Cuentas';
 import Diario from './pages/Diario';
 import Estadisticas from './pages/Estadisticas';
 import Directorio from './pages/Directorio';
+import Estado from './pages/Estado';
 import Login from './pages/Login';
 import { useOrderStore } from './store/orderStore';
 
@@ -37,6 +38,9 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Ruta pública — sin login ni Layout */}
+        <Route path="/estado" element={<Estado />} />
+        {/* Rutas protegidas */}
         <Route path="/" element={<Layout />}>
           <Route index element={<Ventas />} />
           <Route path="cocina" element={<Cocina />} />

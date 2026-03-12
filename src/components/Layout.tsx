@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { Utensils, ChefHat, Truck, Wallet, Book, Activity, Users } from 'lucide-react';
+import { Utensils, ChefHat, Truck, Wallet, Book, Activity, Users, Eye } from 'lucide-react';
 
 export default function Layout() {
   return (
@@ -49,6 +49,11 @@ export default function Layout() {
           <li>
             <NavLink to="/directorio" className={({isActive}) => `flex items-center justify-center md:justify-start gap-3 p-3 rounded-xl md:rounded-lg transition-all active:scale-95 min-w-[44px] min-h-[44px] ${isActive ? 'bg-emerald-500/10 text-emerald-400 font-medium' : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'}`}>
               <Users size={24} /> <span className="hidden md:block">Directorio</span>
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/estado" target="_blank" rel="noopener noreferrer" className={() => `flex items-center justify-center md:justify-start gap-3 p-3 rounded-xl md:rounded-lg transition-all active:scale-95 min-w-[44px] min-h-[44px] text-neutral-400 hover:bg-neutral-800/50 hover:text-cyan-400`} title="Vista pública de pedidos">
+              <Eye size={24} /> <span className="hidden md:block text-xs">Vista Pedidos</span>
             </NavLink>
           </li>
         </ul>

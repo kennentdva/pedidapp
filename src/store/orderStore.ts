@@ -8,12 +8,25 @@ export type Cliente = {
   telefono?: string;
 };
 
+export type ItemPedido = {
+  proteina: string | null;
+  acompanamientos: string[];
+  sopa: string | null;
+  extras: string[];
+  nota?: string;
+  tipoPlato?: 'normal' | 'snack' | 'arroz';
+  valor: number;
+};
+
 export type PedidoDetalle = {
   proteina: string | null;
   acompanamientos: string[];
   sopa: string | null;
   extras: string[];
   nota?: string;
+  tipoPlato?: 'normal' | 'snack' | 'arroz';
+  // Multi-item: cuando hay más de una comida en el mismo pedido
+  items?: ItemPedido[];
 };
 
 export type Pedido = {
@@ -28,12 +41,25 @@ export type Pedido = {
   created_at?: string;
 };
 
+export type ArrozEspecialItem = {
+  nombre: string;
+  precioSmall: number;
+  precioLarge: number;
+};
+
 export type MenuConfig = {
   proteinas: string[];
   acompanamientos: string[];
   sopas: string[];
   extras: { nombre: string, precio: number }[];
   snacks: { nombre: string, precio: number, desc?: string }[];
+  arrozEspeciales: ArrozEspecialItem[];
+  menuDia?: {
+    activo: boolean;
+    titulo: string;
+    descripcion: string;
+    precio?: number;
+  };
 };
 
 interface OrderState {
@@ -43,6 +69,8 @@ interface OrderState {
   valorBase: number;
   precioManual: boolean;
   menuConfig: MenuConfig;
+  // Carrito (multi-item por pedido)
+  carrito: ItemPedido[];
   
   setResponsable: (c: Cliente | null) => void;
   setBeneficiario: (b: string) => void;
@@ -52,6 +80,9 @@ interface OrderState {
   toggleExtra: (e: string, precio: number) => void;
   setValorBase: (v: number) => void;
   setSnackDirecto: (snackName: string, precio: number) => void;
+  setArrozEspecial: (nombre: string, precio: number) => void;
+  addItemAlCarrito: () => void;
+  removeItemDelCarrito: (index: number) => void;
   fetchMenuConfig: () => Promise<void>;
   setMenuConfig: (config: Partial<MenuConfig>) => Promise<void>;
   resetOrder: () => void;
@@ -63,6 +94,7 @@ interface OrderState {
 const initialState = {
   responsable: null,
   beneficiario: '',
+  carrito: [] as ItemPedido[],
   detalle: {
     proteina: null,
     acompanamientos: [],
@@ -75,7 +107,7 @@ const initialState = {
 };
 
 const defaultMenuConfig: MenuConfig = {
-  proteinas: ['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa', 'Arroz con Pollo Pequeño', 'Arroz con Pollo Mediano', 'Arroz Cubano Pequeño', 'Arroz Cubano Mediano'],
+  proteinas: ['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa'],
   acompanamientos: ['Arroz', 'Ensalada', 'Papas', 'Patacón', 'Frijol'],
   sopas: ['Sopa del Día', 'Crema de Tomate', 'Sancocho'],
   extras: [
@@ -89,19 +121,28 @@ const defaultMenuConfig: MenuConfig = {
     { nombre: 'Boli', precio: 1000, desc: 'Cualquier sabor' },
     { nombre: 'Helado Pequeño', precio: 2000, desc: 'Vaso/Paleta 2K' },
     { nombre: 'Helado Grande', precio: 3000, desc: 'Vaso/Paleta 3K' }
-  ]
+  ],
+  arrozEspeciales: [
+    { nombre: 'Arroz Trifásico', precioSmall: 5000, precioLarge: 10000 },
+    { nombre: 'Arroz Cubano', precioSmall: 5000, precioLarge: 10000 },
+    { nombre: 'Arroz con Pollo', precioSmall: 5000, precioLarge: 10000 },
+  ],
+  menuDia: { activo: false, titulo: '', descripcion: '', precio: undefined }
 };
 
 const savedMenuConfig = localStorage.getItem('pedidapp_menu_config');
 const parsedConfig = savedMenuConfig ? JSON.parse(savedMenuConfig) : null;
 const initialMenuConfig = parsedConfig ? { ...defaultMenuConfig, ...parsedConfig } : defaultMenuConfig;
 
-// Asegurar que si en el caché antiguo no existía 'extras' o 'snacks', se agreguen
+// Asegurar que si en el caché antiguo no existía 'extras', 'snacks' o 'arrozEspeciales', se agreguen
 if (!initialMenuConfig.extras) {
   initialMenuConfig.extras = defaultMenuConfig.extras;
 }
 if (!initialMenuConfig.snacks) {
   initialMenuConfig.snacks = defaultMenuConfig.snacks;
+}
+if (!initialMenuConfig.arrozEspeciales) {
+  initialMenuConfig.arrozEspeciales = defaultMenuConfig.arrozEspeciales;
 }
 
 const calcularPrecio = (proteina: string | null, sopa: string | null, acompanamientos: string[], manualPrice: boolean, currentValor: number) => {
@@ -187,8 +228,37 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   setSnackDirecto: (snackName: string, precio: number) => set({
      precioManual: true,
      valorBase: precio,
-     detalle: { proteina: snackName, acompanamientos: [], sopa: null, extras: [] }
+     detalle: { proteina: snackName, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'snack' }
   }),
+
+  setArrozEspecial: (nombre: string, precio: number) => set({
+     precioManual: true,
+     valorBase: precio,
+     detalle: { proteina: nombre, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'arroz' }
+  }),
+
+  addItemAlCarrito: () => set((state) => {
+    if (!state.detalle.proteina) return state;
+    const item: ItemPedido = {
+      proteina: state.detalle.proteina,
+      acompanamientos: state.detalle.acompanamientos,
+      sopa: state.detalle.sopa,
+      extras: state.detalle.extras,
+      nota: state.detalle.nota,
+      tipoPlato: state.detalle.tipoPlato,
+      valor: state.valorBase,
+    };
+    return {
+      carrito: [...state.carrito, item],
+      detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
+      valorBase: 0,
+      precioManual: false,
+    };
+  }),
+
+  removeItemDelCarrito: (index: number) => set((state) => ({
+    carrito: state.carrito.filter((_, i) => i !== index),
+  })),
 
   fetchMenuConfig: async () => {
     const { data } = await supabase.from('clientes').select('nombre').eq('id', MENU_CONFIG_ID).single();
@@ -222,6 +292,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   resetOrder: () => set({
     responsable: null,
     beneficiario: '',
+    carrito: [],
     detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
     valorBase: 0,
     precioManual: false,

@@ -42,6 +42,9 @@ export default function Cuentas() {
   const [itemsMasivos, setItemsMasivos] = useState<any[]>([]);
   const [savingMasivo, setSavingMasivo] = useState(false);
   const [stepMasivo, setStepMasivo] = useState<'input' | 'review'>('input');
+  
+  // Custom Modal
+  const [abonoToDelete, setAbonoToDelete] = useState<{ id: string, monto: number } | null>(null);
 
   const menuConfig = useOrderStore(state => state.menuConfig);
 
@@ -51,10 +54,9 @@ export default function Cuentas() {
   }, []);
 
   const fetchDeudaGlobal = async () => {
-    // Calculamos la deuda global igual que en el PDF (por cliente, sin dejar saldos negativos)
     const { data: clientesData } = await supabase.from('clientes').select('*');
-    const { data: pedidosData, error: errP } = await supabase.from('pedidos').select('responsable_id, valor, pagado');
-    const { data: pagosData, error: errPag } = await supabase.from('pagos').select('cliente_id, monto, metodo');
+    const { data: pedidosData, error: errP } = await supabase.from('pedidos').select('responsable_id, valor, pagado, created_at');
+    const { data: pagosData, error: errPag } = await supabase.from('pagos').select('cliente_id, monto');
     
     if (clientesData && pedidosData && pagosData) {
       let totalGlobal = 0;
@@ -62,8 +64,8 @@ export default function Cuentas() {
 
       clientesData.forEach(cliente => {
         if (cliente.id === MENU_CONFIG_ID) return;
-        const pedCli = pedidosData.filter(p => !p.pagado && p.responsable_id === cliente.id);
-        const pagCli = pagosData.filter(p => p.cliente_id === cliente.id && !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+        const pedCli = pedidosData.filter(p => p.responsable_id === cliente.id);
+        const pagCli = pagosData.filter(p => p.cliente_id === cliente.id);
 
         const sumConsumo = pedCli.reduce((acc, p) => acc + p.valor, 0);
         const sumAbonos = pagCli.reduce((acc, p) => acc + p.monto, 0);
@@ -119,20 +121,51 @@ export default function Cuentas() {
     setEditingClientName(false);
   };
 
-  const calcularDeudaTotal = () => {
-    const pendienteSum = historialPedidos
-      .filter(p => !p.pagado)
-      .reduce((acc, p) => acc + p.valor, 0);
+  const computeLedger = () => {
+    const sortedPagos = [...pagosRealizados].sort((a, b) => new Date(a.fecha!).getTime() - new Date(b.fecha!).getTime());
+    let abonosDisponibles = sortedPagos.reduce((acc, p) => acc + p.monto, 0);
 
-    const totalAbonosGenerales = pagosRealizados
-      .filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'))
-      .reduce((acc, p) => acc + p.monto, 0);
+    const sortedPedidos = [...historialPedidos].sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime());
+    
+    const pedidosLedger = sortedPedidos.map(p => {
+      let calcPagado = false;
+      if (abonosDisponibles >= p.valor) {
+        calcPagado = true;
+        abonosDisponibles -= p.valor;
+      }
+      return { ...p, calcPagado };
+    });
 
-    return Math.max(0, pendienteSum - totalAbonosGenerales);
+    let abonosConsumidos = pagosRealizados.reduce((acc, p) => acc + p.monto, 0) - abonosDisponibles;
+    const pagosLedger = sortedPagos.map(p => {
+      let calcArchivado = false;
+      if (abonosConsumidos >= p.monto) {
+         calcArchivado = true;
+         abonosConsumidos -= p.monto;
+      } else if (abonosConsumidos > 0) {
+         abonosConsumidos = 0;
+      }
+      return { ...p, calcArchivado };
+    });
+
+    return { 
+      pedidosLedger: pedidosLedger.reverse(), 
+      abonosDisponibles, 
+      pagosLedger: pagosLedger.reverse() 
+    };
   };
 
-  const getSubtotalConsumo = () => historialPedidos.filter(p => !p.pagado).reduce((acc, p) => acc + p.valor, 0);
-  const getSubtotalAbonos = () => pagosRealizados.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado')).reduce((acc, p) => acc + p.monto, 0);
+  const { pedidosLedger, abonosDisponibles, pagosLedger } = computeLedger();
+
+  const calcularDeudaTotal = () => {
+    const sumConsumo = historialPedidos.reduce((acc, p) => acc + p.valor, 0);
+    const sumAbonos = pagosRealizados.reduce((acc, p) => acc + p.monto, 0);
+    return Math.max(0, sumConsumo - sumAbonos);
+  };
+
+  const getSubtotalConsumo = () => pedidosLedger.filter(p => mostrarArchivados ? true : !p.calcPagado).reduce((acc, p) => acc + p.valor, 0);
+  const getSubtotalAbonos = () => mostrarArchivados ? pagosRealizados.reduce((acc, p) => acc + p.monto, 0) : abonosDisponibles;
+  
   const pagarDeuda = async () => {
     const abono = typeof montoPago === 'string' ? parseFloat(montoPago) : montoPago;
     
@@ -141,44 +174,25 @@ export default function Cuentas() {
 
     setSavingPayment(true);
 
-    // Registrar abono general. 
-    // IMPORTANTE: En el balance puro, esto NO marca pedidos como pagados.
-    const { data: insertResult, error: errorPago } = await supabase.from('pagos').insert([{
+    const { error: errorPago } = await supabase.from('pagos').insert([{
       cliente_id: selectedCliente.id,
       monto: abono,
       metodo: metodo
-    }]).select();
+    }]);
 
     if (!errorPago) {
       if (abono >= calcularDeudaTotal()) {
          // SALDAR Y ARCHIVAR TODO AUTOMÁTICAMENTE
-         // 1. Marcar todos los platos pendientes como pagados
          const pedidosPendientesIds = historialPedidos.filter(p => !p.pagado).map(p => p.id);
          if (pedidosPendientesIds.length > 0) {
             await supabase.from('pedidos').update({ pagado: true }).in('id', pedidosPendientesIds);
          }
-         // 2. Archivar abonos anteriores (para que no resten a deudas futuras que arrancan de 0)
-         const abonosActivosIds = pagosRealizados.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado')).map(p => p.id);
-         if (abonosActivosIds.length > 0) {
-            // Un pequeño truco para evitar actualizar 1 por 1, en supabase JS es update con 'in' o hacer loop
-            for (const pagoId of abonosActivosIds) {
-               const pOriginal = pagosRealizados.find(x => x.id === pagoId);
-               await supabase.from('pagos').update({ metodo: `Archivado: ${pOriginal.metodo}` }).eq('id', pagoId);
-            }
-         }
-         // 3. Este mismo abono que estamos creando (si sobra plata o exacto) pasará a ser "Saldado" o simplemente se marca para no estorbar en el futuro.
-         // Realmente es mejor actualizarlo a "Archivado" de una vez si cubrió todo, dejando la deuda en 0.
-         const dataPagoNuevo = insertResult && insertResult[0];
-         if (dataPagoNuevo) {
-            await supabase.from('pagos').update({ metodo: `Archivado: ${metodo}` }).eq('id', dataPagoNuevo.id);
-         }
-         alert('Deuda completamente saldada. La cuenta se ha limpiado y archivado.');
+         alert('Deuda completamente saldada. La cuenta se ha limpiado de la vista principal.');
       } else {
          alert('Abono registrado correctamente.');
       }
 
       setMontoPago('');
-      
       setTimeout(() => {
         if (selectedCliente) seleccionarCliente(selectedCliente);
         fetchDeudaGlobal();
@@ -202,34 +216,39 @@ export default function Cuentas() {
 
   const saldarPedidoEspecifico = async (p: Pedido) => {
     if (!selectedCliente) return;
+    if (!window.confirm(`¿Confirmar pago del día por $${p.valor.toLocaleString()}?`)) return;
     setSavingPayment(true);
-    const { error } = await supabase.from('pagos').insert([{
+    const { error: errPago } = await supabase.from('pagos').insert([{
       cliente_id: selectedCliente.id,
       monto: p.valor,
-      metodo: 'Saldado: Efectivo'
+      metodo: 'Efectivo'
     }]);
-
-    if (!error) {
-      await supabase.from('pedidos').update({ pagado: true }).eq('id', p.id);
-      seleccionarCliente(selectedCliente);
-      fetchDeudaGlobal();
+    if (errPago) {
+      alert('Error al registrar el pago: ' + errPago.message);
+      setSavingPayment(false);
+      return;
     }
+    const { error: errPed } = await supabase.from('pedidos').update({ pagado: true }).eq('id', p.id!);
+    if (errPed) alert('El pago se registró pero ocurrió un error al marcar el pedido: ' + errPed.message);
+    seleccionarCliente(selectedCliente);
+    fetchDeudaGlobal();
     setSavingPayment(false);
   };
 
-  const eliminarAbono = async (id: string, monto: number) => {
-    if (!window.confirm(`¿Estás seguro de que deseas eliminar este abono de $${monto.toLocaleString()}?`)) return;
+  const confirmarEliminarAbono = async () => {
+    if (!abonoToDelete) return;
     
     setLoading(true);
-    const { error } = await supabase.from('pagos').delete().eq('id', id);
+    const { error } = await supabase.from('pagos').delete().eq('id', abonoToDelete.id);
     
     if (!error) {
       if (selectedCliente) seleccionarCliente(selectedCliente);
       fetchDeudaGlobal();
     } else {
       alert('Error al intentar eliminar el abono.');
-      setLoading(false);
     }
+    setAbonoToDelete(null);
+    setLoading(false);
   };
 
   const procesarDeudaHistorica = async () => {
@@ -376,7 +395,7 @@ export default function Cuentas() {
           await supabase.from('pagos').insert([{
              cliente_id: idAUsar,
              monto: Number(item.precio) || 0,
-             metodo: 'Saldado: Efectivo (Importado)'
+             metodo: 'Efectivo'
           }]);
        }
     }
@@ -409,8 +428,8 @@ export default function Cuentas() {
     // O de forma más simple según el usuario: Solo mostrar los que no están marcados como pagados formalmente.
     // Pero como ahora es por abonos, mostraremos los pedidos pendientes de saldar.
     
-    const pedidosPendientes = mostrarArchivados ? historialPedidos : historialPedidos.filter(p => !p.pagado);
-    const abonosGenerales = mostrarArchivados ? pagosRealizados : pagosRealizados.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+    const pedidosPendientes = mostrarArchivados ? pedidosLedger : pedidosLedger.filter(p => !p.calcPagado);
+    const abonosGenerales = mostrarArchivados ? pagosLedger : pagosLedger.filter(p => !p.calcArchivado);
 
     pedidosPendientes.forEach(p => {
       const d = new Date(p.created_at || '');
@@ -479,11 +498,12 @@ export default function Cuentas() {
       const tablaDeudas: any[] = [];
       let deudaTotalGlobal = 0;
 
+      // Usar directamente la lógica estricta SUM - SUM para el PDF
       clientesData.forEach(cliente => {
          if (cliente.id === MENU_CONFIG_ID) return;
 
-         const pedCli = pedidosData.filter(p => !p.pagado && p.responsable_id === cliente.id);
-         const pagCli = pagosData.filter(p => p.cliente_id === cliente.id && !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+         const pedCli = pedidosData.filter(p => p.responsable_id === cliente.id);
+         const pagCli = pagosData.filter(p => p.cliente_id === cliente.id);
 
          const sumConsumo = pedCli.reduce((acc, p) => acc + p.valor, 0);
          const sumAbonos = pagCli.reduce((acc, p) => acc + p.monto, 0);
@@ -545,7 +565,7 @@ export default function Cuentas() {
     doc.setTextColor(100);
     doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 14, 30);
     
-    const pedidosPendientes = mostrarArchivados ? historialPedidos : historialPedidos.filter(p => !p.pagado);
+    const pedidosPendientes = mostrarArchivados ? pedidosLedger : pedidosLedger.filter(p => !p.calcPagado);
     const tablaConsumos = pedidosPendientes.map(p => {
        const d = new Date(p.created_at || '').toLocaleDateString();
        let detalleStr = p.detalle?.proteina || '';
@@ -574,7 +594,7 @@ export default function Cuentas() {
       finalY = (doc as any).lastAutoTable.finalY + 10;
     }
 
-    const abonosGenerales = mostrarArchivados ? pagosRealizados : pagosRealizados.filter(p => !p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'));
+    const abonosGenerales = mostrarArchivados ? pagosLedger : pagosLedger.filter(p => !p.calcArchivado);
     const tablaAbonos = abonosGenerales.map(pago => [
        new Date(pago.fecha || new Date()).toLocaleDateString(),
        pago.metodo,
@@ -733,11 +753,11 @@ export default function Cuentas() {
                        {mostrarHistorico ? 'Cerrar Histórico' : '+ Deuda Histórica'}
                     </button>
                     <div className="flex justify-between items-center text-[10px] uppercase font-black text-neutral-500 tracking-widest">
-                      <span>Consumido (Pendiente):</span>
+                      <span>{mostrarArchivados ? 'Total Consumido (Histórico):' : 'Consumido (Pendiente):'}</span>
                       <span className="text-white font-mono">${getSubtotalConsumo().toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between items-center text-[10px] uppercase font-black text-emerald-500 tracking-widest">
-                      <span>Abonos Realizados:</span>
+                      <span>{mostrarArchivados ? 'Total Abonos (Histórico):' : 'Abonos Disponibles:'}</span>
                       <span className="font-mono">- ${getSubtotalAbonos().toLocaleString()}</span>
                     </div>
                     <div className="border-t border-neutral-800 mt-2 pt-2 flex justify-between items-center bg-red-950/20 px-2 rounded-lg py-1">
@@ -879,20 +899,33 @@ export default function Cuentas() {
                 {/* Lista de Pedidos (Debe / Consumo) */}
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Consumo Individual</h4>
-                   {historialPedidos.filter(p => mostrarArchivados ? true : !p.pagado).map(p => {
+                   {pedidosLedger.filter(p => mostrarArchivados ? true : !p.calcPagado).map(p => {
                      const d = new Date(p.created_at || '');
                      return (
                        <div key={p.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-4 rounded-2xl relative overflow-hidden">
-                         {!p.pagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500"></div>}
-                         {p.pagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500"></div>}
-                                                  <div className="pl-3">
-                            <p className="font-bold text-white mb-1">
-                              {p.detalle?.proteina} 
-                              {p.detalle?.sopa && <span className="text-orange-400 ml-1">+ Sopa de {p.detalle.sopa}</span>}
-                            </p>
-                            <p className="text-xs text-neutral-500">
-                              {p.detalle?.acompanamientos?.join(', ')}
-                            </p>
+                         {!p.calcPagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500"></div>}
+                         {p.calcPagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500"></div>}
+                                                  <div className="pl-3 flex-1">
+                             <p className="font-bold text-white mb-1">
+                               {(p.detalle as any)?.items ? (
+                                 <span>
+                                   {(p.detalle as any).items.map((item: any, idx: number) => (
+                                     <span key={idx} className="block text-sm">
+                                       <span className="text-neutral-400">{item.tipoPlato === 'arroz' ? '🍚' : item.tipoPlato === 'snack' ? '🍦' : '🍗'}</span> {item.proteina}
+                                       {item.sopa && <span className="text-orange-400 ml-1">+ Sopa de {item.sopa}</span>}
+                                     </span>
+                                   ))}
+                                 </span>
+                               ) : (
+                                 <span>
+                                   {p.detalle?.proteina}
+                                   {p.detalle?.sopa && <span className="text-orange-400 ml-1">+ Sopa de {p.detalle.sopa}</span>}
+                                 </span>
+                               )}
+                             </p>
+                             {!(p.detalle as any)?.items && (
+                               <p className="text-xs text-neutral-500">{p.detalle?.acompanamientos?.join(', ')}</p>
+                             )}
                             <p className="text-[10px] text-neutral-500 flex items-center gap-1 mt-1">
                               <CalendarDays size={10}/> {d.toLocaleDateString()}
                             </p>
@@ -912,13 +945,13 @@ export default function Cuentas() {
                              </div>
                            ) : (
                              <p 
-                               className={`font-black text-lg cursor-pointer hover:text-blue-400 ${p.pagado ? 'text-emerald-400 line-through opacity-50' : 'text-orange-400'}`}
+                               className={`font-black text-lg cursor-pointer hover:text-blue-400 ${p.calcPagado ? 'text-emerald-400 line-through opacity-50' : 'text-orange-400'}`}
                                onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}
                              >
                                ${p.valor.toLocaleString()}
                              </p>
                            )}
-                           {!p.pagado && (
+                           {!p.calcPagado && (
                              <button 
                                onClick={() => saldarPedidoEspecifico(p)}
                                className="text-[10px] bg-emerald-600/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-600 hover:text-white transition-colors"
@@ -940,30 +973,30 @@ export default function Cuentas() {
                 {/* Lista de Abonos (Ya Pagado / Entradas) */}
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Historial de Abonos / Pagos</h4>
-                   {pagosRealizados.filter(p => mostrarArchivados ? true : (!p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'))).map(pago => {
+                   {pagosLedger.filter(p => mostrarArchivados ? true : !p.calcArchivado).map(pago => {
                      const d = new Date(pago.fecha || new Date());
                      return (
-                        <div key={pago.id} className={`p-4 rounded-2xl flex justify-between items-center group border ${pago.metodo.startsWith('Archivado') ? 'bg-neutral-900 border-neutral-800 opacity-60' : 'bg-emerald-950/10 border-emerald-900/30'}`}>
+                        <div key={pago.id} className={`p-4 rounded-2xl flex justify-between items-center group border ${pago.calcArchivado ? 'bg-neutral-900 border-neutral-800 opacity-60' : 'bg-emerald-950/10 border-emerald-900/30'}`}>
                           <div>
-                            <p className={`${pago.metodo.startsWith('Archivado') ? 'text-neutral-500' : 'text-emerald-400'} font-black text-lg`}>+ ${pago.monto.toLocaleString()}</p>
-                            <p className="text-[10px] text-neutral-500 uppercase font-bold">{pago.metodo.replace('Archivado: ', '')} • {d.toLocaleDateString()}</p>
+                            <p className={`${pago.calcArchivado ? 'text-neutral-500' : 'text-emerald-400'} font-black text-lg`}>+ ${pago.monto.toLocaleString()}</p>
+                            <p className="text-[10px] text-neutral-500 uppercase font-bold">{pago.metodo} • {d.toLocaleDateString()}</p>
                           </div>
                           <div className="flex gap-2">
                             <button 
-                               onClick={() => eliminarAbono(pago.id, pago.monto)} 
+                               onClick={() => setAbonoToDelete({ id: pago.id!, monto: pago.monto })} 
                                className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
                                title="Eliminar abono"
                             >
                                <Trash2 size={16}/>
                             </button>
-                            <div className={`p-2 rounded-lg ${pago.metodo.startsWith('Archivado') ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                            <div className={`p-2 rounded-lg ${pago.calcArchivado ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
                                <TrendingDown size={16} className="rotate-180"/>
                             </div>
                           </div>
                        </div>
                      )
                    })}
-                   {pagosRealizados.filter(p => mostrarArchivados ? true : (!p.metodo.startsWith('Saldado') && !p.metodo.startsWith('Archivado'))).length === 0 && (
+                   {pagosLedger.filter(p => mostrarArchivados ? true : !p.calcArchivado).length === 0 && (
                       <div className="text-center py-12 text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
                          No se han registrado abonos recientes.
                       </div>
@@ -1136,6 +1169,38 @@ export default function Cuentas() {
             </div>
          </div>
        )}
+
+      {/* Modal Eliminar Abono */}
+      {abonoToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl relative text-center animate-fade-in">
+            <div className="mx-auto w-16 h-16 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mb-4">
+              <Trash2 size={32} />
+            </div>
+            <h2 className="text-xl font-black text-white mb-2">Eliminar Abono</h2>
+            <p className="text-neutral-400 text-sm mb-6">
+              ¿Estás seguro de que deseas eliminar este abono de <strong className="text-white">${abonoToDelete.monto.toLocaleString()}</strong>?
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => setAbonoToDelete(null)}
+                className="py-3 rounded-xl font-bold text-neutral-400 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-colors"
+                disabled={loading}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={confirmarEliminarAbono}
+                className="py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500 transition-colors shadow-lg shadow-red-600/30"
+                disabled={loading}
+              >
+                {loading ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
      </div>
    );
  }

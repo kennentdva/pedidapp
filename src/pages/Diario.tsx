@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Book, Calculator, DollarSign, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Book, Calculator, DollarSign, CheckCircle2, AlertTriangle, ChevronDown } from 'lucide-react';
 import { type Pedido } from '../store/orderStore';
 
 export default function Diario() {
@@ -8,20 +8,24 @@ export default function Diario() {
   const [ingresosEfectivoHoy, setIngresosEfectivoHoy] = useState(0);
   const [dineroContado, setDineroContado] = useState<number | string>('');
   const [loading, setLoading] = useState(true);
-  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const [expandedMeses, setExpandedMeses] = useState<Record<string, boolean>>({});
+  const [expandedDias, setExpandedDias] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchTodosLosPedidos();
   }, []);
 
-  const toggleGroup = (fecha: string) => {
-    setExpandedDates(prev => ({ ...prev, [fecha]: !prev[fecha] }));
+  const toggleMes = (mes: string) => {
+    setExpandedMeses(prev => ({ ...prev, [mes]: !prev[mes] }));
+  };
+
+  const toggleDia = (key: string) => {
+    setExpandedDias(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   const fetchTodosLosPedidos = async () => {
     setLoading(true);
     
-    // Obtener pedidos
     const { data: dataPedidos } = await supabase
       .from('pedidos')
       .select('*')
@@ -29,7 +33,6 @@ export default function Diario() {
 
     if (dataPedidos) setPedidos(dataPedidos as Pedido[]);
 
-    // Obtener abonos/pagos de HOY en Efectivo para el Arqueo
     const hoyStr = new Date().toISOString().split('T')[0];
     const { data: pagosHoy } = await supabase
       .from('pagos')
@@ -49,17 +52,36 @@ export default function Diario() {
 
   const diferenciaArqueo = (Number(dineroContado) || 0) - ingresosEfectivoHoy;
 
-  // Agrupar pedidos por fecha corta (YYYY-MM-DD)
-  const grupos = pedidos.reduce((acc: Record<string, Pedido[]>, p) => {
-    const fecha = new Date(p.created_at || '').toLocaleDateString('es-ES', {
+  // Estructura: { mesLabel: { diaLabel: Pedido[] } }
+  const gruposMes: Record<string, Record<string, Pedido[]>> = {};
+
+  pedidos.forEach(p => {
+    const date = new Date(p.created_at || '');
+    
+    const mesLabel = date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    // Capitalize first letter
+    const mesCapitalized = mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1);
+
+    const diaLabel = date.toLocaleDateString('es-ES', {
       weekday: 'long',
       day: 'numeric',
       month: 'long'
     });
-    if (!acc[fecha]) acc[fecha] = [];
-    acc[fecha].push(p);
-    return acc;
-  }, {});
+    const diaCapitalized = diaLabel.charAt(0).toUpperCase() + diaLabel.slice(1);
+
+    if (!gruposMes[mesCapitalized]) gruposMes[mesCapitalized] = {};
+    if (!gruposMes[mesCapitalized][diaCapitalized]) gruposMes[mesCapitalized][diaCapitalized] = [];
+    gruposMes[mesCapitalized][diaCapitalized].push(p);
+  });
+
+  // Auto-expand the most recent month
+  const meses = Object.keys(gruposMes);
+  useEffect(() => {
+    if (meses.length > 0) {
+      setExpandedMeses({ [meses[0]]: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidos.length]);
 
   return (
     <div className="flex flex-col h-full p-4 md:p-10 text-neutral-100 max-w-2xl mx-auto selection:bg-orange-500/30">
@@ -151,50 +173,85 @@ export default function Diario() {
              </div>
           </div>
 
-          {Object.entries(grupos).map(([fecha, lista]) => {
-            const isExpanded = !!expandedDates[fecha];
+          {/* Pedidos agrupados: Mes → Día */}
+          {meses.map(mes => {
+            const isMesExpanded = !!expandedMeses[mes];
+            const dias = Object.keys(gruposMes[mes]);
+            const totalMes = dias.reduce((acc, dia) => acc + gruposMes[mes][dia].length, 0);
+
             return (
-              <div key={fecha} className="group bg-neutral-900/50 border border-neutral-800/50 rounded-3xl overflow-hidden transition-all">
-                {/* Fecha como encabezado de Nota Accordion */}
-                <button 
-                  onClick={() => toggleGroup(fecha)}
-                  className="w-full px-6 py-5 flex justify-between items-center hover:bg-neutral-800 transition-colors"
+              <div key={mes} className="bg-neutral-900/60 border border-neutral-800 rounded-3xl overflow-hidden">
+                {/* Encabezado de MES */}
+                <button
+                  onClick={() => toggleMes(mes)}
+                  className="w-full px-6 py-5 flex justify-between items-center hover:bg-neutral-800/50 transition-colors"
                 >
-                  <div className="flex flex-col items-start">
-                    <h3 className="text-xl font-black text-orange-400 capitalize">
-                      {fecha}
-                    </h3>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-neutral-600 mt-1">{lista.length} pedidos hoy</span>
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-8 bg-orange-500 rounded-full" />
+                    <div className="flex flex-col items-start">
+                      <h3 className="text-2xl font-black text-white">{mes}</h3>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-neutral-500">{totalMes} pedidos · {dias.length} días</span>
+                    </div>
                   </div>
-                  <div className={`p-2 rounded-full bg-neutral-800 text-neutral-500 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                  </div>
+                  <ChevronDown
+                    size={22}
+                    className={`text-neutral-500 transition-transform duration-300 ${isMesExpanded ? 'rotate-180' : ''}`}
+                  />
                 </button>
 
-                {isExpanded && (
-                  <div className="px-6 pb-6 pt-2 divide-y divide-neutral-800/50">
-                    {lista.map(p => (
-                      <div key={p.id} className="py-4 last:pb-0">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="font-bold text-lg text-white">{p.beneficiario || 'Invitado'}</span>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-neutral-600">
-                            {new Date(p.created_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <div className="text-neutral-500 text-sm font-medium leading-relaxed">
-                          <span className="text-neutral-400">{p.detalle.proteina}</span>
-                          {p.detalle.sopa && (
-                            <span className="bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded ml-2 font-bold text-[10px] uppercase">
-                              🍲 Sopa de {p.detalle.sopa}
-                            </span>
+                {isMesExpanded && (
+                  <div className="px-4 pb-4 pt-1 space-y-3">
+                    {dias.map(dia => {
+                      const diaKey = `${mes}__${dia}`;
+                      const isDiaExpanded = !!expandedDias[diaKey];
+                      const lista = gruposMes[mes][dia];
+
+                      return (
+                        <div key={diaKey} className="bg-neutral-950/50 border border-neutral-800/50 rounded-2xl overflow-hidden">
+                          {/* Encabezado de DÍA */}
+                          <button
+                            onClick={() => toggleDia(diaKey)}
+                            className="w-full px-5 py-4 flex justify-between items-center hover:bg-neutral-800/40 transition-colors"
+                          >
+                            <div className="flex flex-col items-start">
+                              <h4 className="text-base font-black text-orange-400 capitalize">{dia}</h4>
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-600">{lista.length} pedidos</span>
+                            </div>
+                            <ChevronDown
+                              size={16}
+                              className={`text-neutral-600 transition-transform duration-300 ${isDiaExpanded ? 'rotate-180' : ''}`}
+                            />
+                          </button>
+
+                          {isDiaExpanded && (
+                            <div className="px-5 pb-5 pt-2 divide-y divide-neutral-800/40">
+                              {lista.map(p => (
+                                <div key={p.id} className="py-3 last:pb-0">
+                                  <div className="flex justify-between items-center mb-1">
+                                    <span className="font-bold text-base text-white">{p.beneficiario || 'Invitado'}</span>
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-neutral-600">
+                                      {new Date(p.created_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  <div className="text-neutral-500 text-sm font-medium leading-relaxed">
+                                    <span className="text-neutral-400">{p.detalle.proteina}</span>
+                                    {p.detalle.sopa && (
+                                      <span className="bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded ml-2 font-bold text-[10px] uppercase">
+                                        🍲 Sopa de {p.detalle.sopa}
+                                      </span>
+                                    )}
+                                    <span className="text-neutral-600 block mt-0.5 italic">
+                                       + {p.detalle.acompanamientos.join(', ')}
+                                       {p.detalle.extras?.length > 0 && ` + ${p.detalle.extras.join(', ')}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           )}
-                          <span className="text-neutral-600 block mt-0.5 italic">
-                             + {p.detalle.acompanamientos.join(', ')}
-                             {p.detalle.extras?.length > 0 && ` + ${p.detalle.extras.join(', ')}`}
-                          </span>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
