@@ -25,12 +25,16 @@ async function subscribeToPush(reg: ServiceWorkerRegistration): Promise<PushSubs
   try {
     const existing = await reg.pushManager.getSubscription();
     if (existing) return existing;
+    
+    const uint8Key = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    
     return await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY).buffer as ArrayBuffer,
+      applicationServerKey: uint8Key as any
     });
-  } catch {
-    return null;
+  } catch (err: any) {
+    console.error('Error interno de suscripción:', err);
+    throw err; // Lanzar el error real para que lo capture el alert de abajo
   }
 }
 
