@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { ChefHat, CheckCircle2, Clock, UtensilsCrossed, RefreshCw } from 'lucide-react';
 import { type Pedido } from '../store/orderStore';
+import { getColombiaStartOfDay, getColombiaEndOfDay, toColombiaDateDisplay, toColombiaTimeDisplay } from '../lib/dateUtils';
 
 // Helper: get display name from a pedido
 function getDetalleLabel(p: Pedido): string {
@@ -44,14 +45,8 @@ export default function Estado() {
   const [newReady, setNewReady] = useState<string | null>(null);
 
   const fetchPedidosHoy = async () => {
-    const localDate = new Date();
-    const offset = localDate.getTimezoneOffset();
-    const localMidnight = new Date(localDate);
-    localMidnight.setHours(0, 0, 0, 0);
-    const startOfDay = new Date(localMidnight.getTime() - offset * 60 * 1000);
-    const localEnd = new Date(localDate);
-    localEnd.setHours(23, 59, 59, 999);
-    const endOfDay = new Date(localEnd.getTime() - offset * 60 * 1000);
+    const startOfDay = getColombiaStartOfDay();
+    const endOfDay = getColombiaEndOfDay();
     const { data } = await supabase.from('pedidos').select('*').gte('created_at', startOfDay.toISOString()).lte('created_at', endOfDay.toISOString()).order('created_at', { ascending: true });
     if (data) { setPedidos(data as Pedido[]); setLastUpdated(new Date()); }
     setLoading(false);
@@ -106,13 +101,13 @@ export default function Estado() {
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Estado de Pedidos</h1>
             <p className="text-neutral-500 text-xs font-bold uppercase tracking-widest">
-              {new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+              {toColombiaDateDisplay()}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 text-neutral-600 text-xs font-bold">
           <RefreshCw size={12} className="animate-spin" style={{ animationDuration: '3s' }} />
-          {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {toColombiaTimeDisplay(lastUpdated)}
         </div>
       </div>
 

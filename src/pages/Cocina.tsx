@@ -4,6 +4,7 @@ import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2, PenLine, 
 import { type Pedido, useOrderStore } from '../store/orderStore';
 import { useNavigate } from 'react-router-dom';
 import { useKitchenNotifications } from '../hooks/useKitchenNotifications';
+import { getColombiaDateString, getColombiaStartOfDay, getColombiaEndOfDay } from '../lib/dateUtils';
 
 export default function Cocina() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -11,18 +12,15 @@ export default function Cocina() {
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [fechaFiltro, setFechaFiltro] = useState<string>(new Date().toISOString().split('T')[0]);
-  const { soundEnabled, requestPermission, playBeep } = useKitchenNotifications();
+  const [fechaFiltro, setFechaFiltro] = useState<string>(getColombiaDateString());
+  const { permission, requestPermission, notifyNewOrder } = useKitchenNotifications();
   const [toastNotificacion, setToastNotificacion] = useState<{ id: string, titulo: string, msj: string } | null>(null);
 
   const fetchPedidos = async () => {
     try {
       setLoading(true);
-      const localDate = new Date(fechaFiltro + 'T12:00:00');
-      const offset = localDate.getTimezoneOffset();
-      const localDateStr = new Date(localDate.getTime() - (offset * 60 * 1000)).toISOString().split('T')[0];
-      const startOfDay = new Date(`${localDateStr}T00:00:00`);
-      const endOfDay = new Date(`${localDateStr}T23:59:59.999`);
+      const startOfDay = getColombiaStartOfDay(fechaFiltro);
+      const endOfDay = getColombiaEndOfDay(fechaFiltro);
       const { data } = await supabase.from('pedidos').select('*').gte('created_at', startOfDay.toISOString()).lte('created_at', endOfDay.toISOString()).order('created_at', { ascending: false });
       if (data) setPedidos(data as Pedido[]);
     } catch (e) { console.error(e); } finally { setLoading(false); }
@@ -35,8 +33,8 @@ export default function Cocina() {
         if (payload.eventType === 'INSERT') {
           const nuevo = payload.new as Pedido;
           setPedidos(prev => [nuevo, ...prev]);
-          playBeep();
           const msj = `${nuevo.beneficiario || 'Cliente'} — ${(nuevo.detalle as any)?.items ? (nuevo.detalle as any).items.length + ' ítems' : nuevo.detalle?.proteina ?? ''}`;
+          notifyNewOrder('🍽️ Nuevo Pedido', msj);
           setToastNotificacion({ id: Date.now().toString(), titulo: '🍽️ Nuevo Pedido', msj });
           setTimeout(() => setToastNotificacion(null), 5000); // Ocultar después de 5s
         }
@@ -44,7 +42,7 @@ export default function Cocina() {
         else if (payload.eventType === 'DELETE') setPedidos(prev => prev.filter(p => p.id !== payload.old.id));
       }).subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fechaFiltro, playBeep]);
+  }, [fechaFiltro, notifyNewOrder]);
 
   const actualizarEstadoCocina = async (id: string, nuevoEstado: 'pendiente' | 'empacado') => {
     setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado_cocina: nuevoEstado } : p));
@@ -202,16 +200,28 @@ export default function Cocina() {
            {/* Notification Bell */}
            <button
              onClick={requestPermission}
-             title={soundEnabled ? 'Sonido activado' : 'Activar sonido de alertas'}
+             title={
+               permission === 'granted' ? 'Notificaciones activas'
+               : permission === 'denied' ? 'Notificaciones bloqueadas — habilita en configuración del navegador'
+               : permission === 'unsupported' ? 'Tu navegador no soporta notificaciones'
+               : 'Activar notificaciones de nuevos pedidos'
+             }
              className={`p-2 rounded-xl border flex items-center gap-1.5 text-xs font-bold transition-colors ${
-               soundEnabled
+               permission === 'granted'
                  ? 'bg-emerald-500/20 border-emerald-700/50 text-emerald-400'
+                 : permission === 'denied'
+                 ? 'bg-red-500/20 border-red-700/50 text-red-400 cursor-not-allowed'
+                 : permission === 'unsupported'
+                 ? 'bg-neutral-800 border-neutral-700 text-neutral-600 cursor-not-allowed'
                  : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-amber-400 hover:border-amber-900/50 cursor-pointer animate-pulse'
              }`}
            >
-             {soundEnabled ? <Bell size={16} /> : <BellOff size={16} />}
+             {permission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
              <span className="hidden md:block">
-               {soundEnabled ? 'Sonido ON' : 'Activar Sonido'}
+               {permission === 'granted' ? 'Notificaciones ON'
+                : permission === 'denied' ? 'Bloqueadas'
+                : permission === 'unsupported' ? 'No soportado'
+                : 'Activar Alertas'}
              </span>
            </button>
            {/* Date filter */}

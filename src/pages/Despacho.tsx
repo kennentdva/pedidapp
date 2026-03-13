@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Truck, Calendar, Trash2, Edit2, Search, CheckSquare, Plus, X, Flame } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
+import { getColombiaDateString, getColombiaStartOfDay, getColombiaEndOfDay } from '../lib/dateUtils';
 
 export default function Despacho() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
-  const [fecha, setFecha] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [fecha, setFecha] = useState<string>(getColombiaDateString());
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [clientes, setClientes] = useState<any[]>([]);
@@ -28,8 +29,8 @@ export default function Despacho() {
 
   const fetchPedidosPorFecha = async () => {
     setLoading(true);
-    const start = new Date(fecha + 'T00:00:00');
-    const end = new Date(fecha + 'T23:59:59');
+    const start = getColombiaStartOfDay(fecha);
+    const end = getColombiaEndOfDay(fecha);
     const { data } = await supabase.from('pedidos').select('*, clientes(nombre)').gte('created_at', start.toISOString()).lte('created_at', end.toISOString()).order('created_at', { ascending: false });
     if (data) setPedidos(data as any[]);
     setLoading(false);
@@ -138,7 +139,7 @@ export default function Despacho() {
     return '';
   };
 
-  const isToday = fecha === new Date().toISOString().split('T')[0];
+  const isToday = fecha === getColombiaDateString();
   const pedidosFiltrados = pedidos.filter(p => p.beneficiario?.toLowerCase().includes(searchTerm.toLowerCase()));
   const pedidosRestaurante = pedidosFiltrados.filter(p => !esSnackDirecto(p));
   const pedidosSnacks = pedidosFiltrados.filter(p => esSnackDirecto(p));

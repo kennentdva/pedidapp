@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Book, Calculator, DollarSign, CheckCircle2, AlertTriangle, ChevronDown } from 'lucide-react';
 import { type Pedido } from '../store/orderStore';
+import { getColombiaDateString } from '../lib/dateUtils';
 
 export default function Diario() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -33,12 +34,12 @@ export default function Diario() {
 
     if (dataPedidos) setPedidos(dataPedidos as Pedido[]);
 
-    const hoyStr = new Date().toISOString().split('T')[0];
+    const hoyStr = getColombiaDateString();
     const { data: pagosHoy } = await supabase
       .from('pagos')
       .select('monto, metodo, fecha')
-      .gte('fecha', `${hoyStr}T00:00:00`)
-      .lte('fecha', `${hoyStr}T23:59:59`);
+      .gte('fecha', `${hoyStr}T00:00:00-05:00`)
+      .lte('fecha', `${hoyStr}T23:59:59-05:00`);
 
     if (pagosHoy) {
       const efectivo = pagosHoy
@@ -58,14 +59,15 @@ export default function Diario() {
   pedidos.forEach(p => {
     const date = new Date(p.created_at || '');
     
-    const mesLabel = date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    const mesLabel = date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric', timeZone: 'America/Bogota' });
     // Capitalize first letter
     const mesCapitalized = mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1);
 
     const diaLabel = date.toLocaleDateString('es-ES', {
       weekday: 'long',
       day: 'numeric',
-      month: 'long'
+      month: 'long',
+      timeZone: 'America/Bogota'
     });
     const diaCapitalized = diaLabel.charAt(0).toUpperCase() + diaLabel.slice(1);
 
