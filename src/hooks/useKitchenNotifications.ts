@@ -98,12 +98,29 @@ export function useKitchenNotifications() {
 
     // 5. Registrar SW y suscribir a Web Push
     try {
+      console.log('Iniciando registro de SW...');
       const reg = await registerServiceWorker();
-      if (reg && VAPID_PUBLIC_KEY) {
-        const sub = await subscribeToPush(reg);
-        if (sub) await saveSubscription(sub);
+      if (!reg) {
+        throw new Error('No se pudo registrar el Service Worker. ¿Estás en HTTPS?');
       }
-    } catch (_) {}
+
+      if (!VAPID_PUBLIC_KEY) {
+        alert('Error: Falta VITE_VAPID_PUBLIC_KEY en la configuración (Vercel).');
+        return;
+      }
+
+      console.log('Suscribiendo a Web Push...');
+      const sub = await subscribeToPush(reg);
+      if (sub) {
+        await saveSubscription(sub);
+        alert('✅ ¡Notificaciones activadas con éxito!');
+      } else {
+        throw new Error('El navegador no pudo crear la suscripción push.');
+      }
+    } catch (err: any) {
+      console.error('Error en registro push:', err);
+      alert('Error al activar notificaciones: ' + (err.message || 'Error desconocido'));
+    }
   }, []);
 
   /** Beep de dos tonos — fallback cuando el browser está abierto y en foco */
