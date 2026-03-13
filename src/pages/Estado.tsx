@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChefHat, CheckCircle2, Clock, UtensilsCrossed, RefreshCw } from 'lucide-react';
+import { ChefHat, CheckCircle2, Clock, UtensilsCrossed, RefreshCw, Sun, Moon } from 'lucide-react';
 import { type Pedido } from '../store/orderStore';
 import { getColombiaStartOfDay, getColombiaEndOfDay, toColombiaDateDisplay, toColombiaTimeDisplay } from '../lib/dateUtils';
+import { useTheme } from '../lib/ThemeContext';
 
 // Helper: get display name from a pedido
 function getDetalleLabel(p: Pedido): string {
@@ -43,6 +44,7 @@ export default function Estado() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [newReady, setNewReady] = useState<string | null>(null);
+  const { theme, toggleTheme } = useTheme();
 
   const fetchPedidosHoy = async () => {
     const startOfDay = getColombiaStartOfDay();
@@ -105,9 +107,18 @@ export default function Estado() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-neutral-600 text-xs font-bold">
-          <RefreshCw size={12} className="animate-spin" style={{ animationDuration: '3s' }} />
-          {toColombiaTimeDisplay(lastUpdated)}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-xl text-neutral-500 hover:text-white hover:bg-neutral-800 transition-all"
+            title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <div className="flex items-center gap-2 text-neutral-600 text-xs font-bold">
+            <RefreshCw size={12} className="animate-spin" style={{ animationDuration: '3s' }} />
+            {toColombiaTimeDisplay(lastUpdated)}
+          </div>
         </div>
       </div>
 

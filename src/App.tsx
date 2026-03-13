@@ -11,6 +11,7 @@ import Directorio from './pages/Directorio';
 import Estado from './pages/Estado';
 import Login from './pages/Login';
 import { useOrderStore } from './store/orderStore';
+import { ThemeProvider } from './lib/ThemeContext';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -36,23 +37,25 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Ruta pública — sin login ni Layout */}
-        <Route path="/estado" element={<Estado />} />
-        {/* Rutas protegidas */}
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Ventas />} />
-          <Route path="cocina" element={<Cocina />} />
-          <Route path="despacho" element={<Despacho />} />
-          <Route path="cuentas" element={<Cuentas />} />
-          <Route path="diario" element={<Diario />} />
-          <Route path="estadisticas" element={<Estadisticas />} />
-          <Route path="directorio" element={<Directorio />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Ruta pública — sin login ni Layout */}
+          <Route path="/estado" element={<Estado />} />
+          {/* Rutas protegidas */}
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Ventas />} />
+            <Route path="cocina" element={<Cocina />} />
+            <Route path="despacho" element={<Despacho />} />
+            <Route path="cuentas" element={<Cuentas />} />
+            <Route path="diario" element={<Diario />} />
+            <Route path="estadisticas" element={<Estadisticas />} />
+            <Route path="directorio" element={<Directorio />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
   );
 }
 

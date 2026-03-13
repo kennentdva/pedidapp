@@ -17,3 +17,57 @@
 .animate-fade-in {
   animation: fade-in 0.25s ease-out both;
 }
+
+/* ── LIGHT MODE ─────────────────────────────────────────────────
+   Cuando <html> tiene la clase "light", sobrescribimos los colores
+   del tema oscuro usando una conversión de paleta neutral.
+───────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+}
+html.light {
+  color-scheme: light;
+}
+
+/* Fondos de la app */
+html.light .bg-\[#0f0f13\]        { background-color: #f1f5f9 !important; }
+html.light .bg-neutral-950        { background-color: #ffffff !important; }
+html.light .bg-neutral-900        { background-color: #f8fafc !important; }
+html.light .bg-neutral-800        { background-color: #e2e8f0 !important; }
+html.light .bg-neutral-700        { background-color: #cbd5e1 !important; }
+html.light .bg-neutral-900\/60    { background-color: rgba(248,250,252,.6) !important; }
+html.light .bg-neutral-950\/50    { background-color: rgba(255,255,255,.5) !important; }
+html.light .bg-neutral-950\/20    { background-color: rgba(255,255,255,.2) !important; }
+html.light .bg-neutral-950\/30    { background-color: rgba(255,255,255,.3) !important; }
+
+/* Texto */
+html.light .text-neutral-100      { color: #0f172a !important; }
+html.light .text-neutral-200      { color: #1e293b !important; }
+html.light .text-neutral-300      { color: #334155 !important; }
+html.light .text-neutral-400      { color: #475569 !important; }
+html.light .text-neutral-500      { color: #64748b !important; }
+html.light .text-neutral-600      { color: #94a3b8 !important; }
+html.light .text-white            { color: #0f172a !important; }
+
+/* Bordes */
+html.light .border-neutral-800    { border-color: #e2e8f0 !important; }
+html.light .border-neutral-700    { border-color: #cbd5e1 !important; }
+
+/* Fondo de hover */
+html.light .hover\:bg-neutral-800\/50:hover { background-color: rgba(226,232,240,.5) !important; }
+html.light .hover\:bg-neutral-800\/40:hover { background-color: rgba(226,232,240,.4) !important; }
+html.light .hover\:bg-neutral-800:hover     { background-color: #e2e8f0 !important; }
+
+/* Input/select oscuros → claro */
+html.light .bg-neutral-950 input,
+html.light input.bg-transparent,
+html.light input.bg-neutral-800,
+html.light select.bg-neutral-800,
+html.light .bg-neutral-800 {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Sidebar nav */
+html.light nav.fixed,
+html.light nav.bg-neutral-950     { background-color: #ffffff !important; border-color: #e2e8f0 !important; }
