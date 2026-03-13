@@ -106,17 +106,44 @@ export default function Cocina() {
   const resumenArroz = pedidosPendientes.reduce((acc, p) => {
     getItems(p).forEach(item => {
       if (item?.tipoPlato === 'arroz') {
-        const nombre = (item.proteina || '').replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '');
-        if (nombre) acc[nombre] = (acc[nombre] || 0) + 1;
+        const proteinaStr = item.proteina || '';
+        // Extraer cantidad (ej: "2x ")
+        const cantMatch = proteinaStr.match(/^(\d+)x\s+/i);
+        const cantidad = cantMatch ? parseInt(cantMatch[1]) : 1;
+        
+        // Extraer tamaño (ej: " pequeña" o " grande")
+        const sizeMatch = proteinaStr.match(/\s+(pequeña|grande)$/i);
+        const tamaño = sizeMatch ? sizeMatch[1].toLowerCase() : 'pequeña';
+        
+        // Nombre base del arroz (sin cantidad ni tamaño)
+        const nombre = proteinaStr.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '').trim();
+
+        if (nombre) {
+          if (!acc[nombre]) acc[nombre] = { total: 0, pequeña: 0, grande: 0 };
+          acc[nombre].total += cantidad;
+          if (tamaño === 'grande') acc[nombre].grande += cantidad;
+          else acc[nombre].pequeña += cantidad;
+        }
       }
     });
     return acc;
-  }, {} as Record<string, number>);
+  }, {} as Record<string, { total: number, pequeña: number, grande: number }>);
 
   const totalSopas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.sopa) acc++; }); return acc; }, 0);
   const totalProteinas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack') acc++; }); return acc; }, 0);
-  const totalArroces = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.tipoPlato === 'arroz') acc++; }); return acc; }, 0);
-  const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b, 0);
+  
+  // Total de arroces (sumando cantidades reales)
+  const totalArroces = pedidos.reduce((acc, p) => { 
+    getItems(p).forEach(it => { 
+      if (it?.tipoPlato === 'arroz') {
+        const cantMatch = (it.proteina || '').match(/^(\d+)x\s+/i);
+        acc += cantMatch ? parseInt(cantMatch[1]) : 1;
+      }
+    }); 
+    return acc; 
+  }, 0);
+
+  const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
 
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
@@ -183,10 +210,24 @@ export default function Cocina() {
         <div className="bg-yellow-950/20 border border-yellow-900/30 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-yellow-900/20 pb-1">🍚 Arroces Pendientes ({totalArrocesPendientes})</span>
            <div className="flex flex-wrap gap-2 justify-center content-center pt-1">
-             {Object.entries(resumenArroz).map(([nombre, cant]) => (
-               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-2 rounded min-w-[50px]">
-                 <span className="text-lg font-black text-yellow-400">{cant}</span>
-                 <span className="text-[10px] text-neutral-400 truncate max-w-[70px]">{nombre}</span>
+             {Object.entries(resumenArroz).map(([nombre, info]) => (
+               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl min-w-[80px] border border-neutral-800/50">
+                 <span className="text-xl font-black text-yellow-400 leading-none">{info.total}</span>
+                 <span className="text-[11px] text-neutral-400 truncate max-w-[90px] text-center mb-1 font-medium">{nombre}</span>
+                 <div className="flex gap-3 border-t border-neutral-800 pt-1.5 w-full justify-center">
+                    {info.pequeña > 0 && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] text-amber-500/50 font-bold uppercase">P</span>
+                        <span className="text-sm font-black text-amber-500">{info.pequeña}</span>
+                      </div>
+                    )}
+                    {info.grande > 0 && (
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] text-orange-500/50 font-bold uppercase">G</span>
+                        <span className="text-sm font-black text-orange-500">{info.grande}</span>
+                      </div>
+                    )}
+                 </div>
                </div>
              ))}
              {Object.keys(resumenArroz).length === 0 && <span className="text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
