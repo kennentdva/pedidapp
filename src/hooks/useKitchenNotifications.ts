@@ -6,10 +6,15 @@ type PermissionStatus = 'idle' | 'granted' | 'denied' | 'unsupported';
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY as string;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const clean = base64String.trim();
+  const padding = '='.repeat((4 - (clean.length % 4)) % 4);
+  const base64 = (clean + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
-  return new Uint8Array(Array.from(rawData).map((c) => c.charCodeAt(0)));
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
 }
 
 async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
@@ -28,6 +33,11 @@ async function subscribeToPush(reg: ServiceWorkerRegistration): Promise<PushSubs
     
     const uint8Key = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
     
+    // Validar que la llave tenga el tamaño correcto (65 bytes para uncompressed EC point)
+    if (uint8Key.length !== 65) {
+      throw new Error(`Llave VAPID inválida: tamaño esperado 65, se obtuvo ${uint8Key.length}. Revisa Vercel.`);
+    }
+
     return await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: uint8Key as any
