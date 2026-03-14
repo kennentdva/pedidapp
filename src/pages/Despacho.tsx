@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Truck, Calendar, Trash2, Edit2, Search, Plus, X, ChevronDown } from 'lucide-react';
+import { Truck, Calendar, Trash2, Edit2, Search, Plus, X, ChevronDown, Check, Clock, Flame } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
 import { getColombiaDateString, getColombiaStartOfDay, getColombiaEndOfDay } from '../lib/dateUtils';
 
@@ -148,6 +148,63 @@ export default function Despacho() {
   const esSoloSopa = (p: Pedido) => (p.detalle as any)?.items?.every((i: any) => i.proteina === 'Solo Sopa') || p.detalle.proteina === 'Solo Sopa';
 
   const isToday = fecha === getColombiaDateString();
+
+  // Helper: flatten items from a pedido (multi-item aware)
+  const getItems = (p: Pedido): any[] => {
+    const items = (p.detalle as any)?.items;
+    if (items && Array.isArray(items) && items.length > 0) return items;
+    return [{ proteina: p.detalle?.proteina, sopa: p.detalle?.sopa, acompanamientos: p.detalle?.acompanamientos ?? [], extras: p.detalle?.extras ?? [], nota: p.detalle?.nota, tipoPlato: p.detalle?.tipoPlato }];
+  };
+
+  // ── Production summary logic (similar to Cocina) ──
+  const pedidosFaltantes = pedidos.filter(p => p.estado_entrega !== 'entregado');
+
+  const resumenProteinas = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      const prot = item?.proteina;
+      const cant = item?.cantidad || 1;
+      const isCompletado = item?.completado === true; // En despacho, "completado" significa empacado
+      if (prot && !isCompletado && prot !== 'Solo Sopa' && item?.tipoPlato !== 'arroz' && item?.tipoPlato !== 'snack') {
+        acc[prot] = (acc[prot] || 0) + cant;
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const resumenSopas = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      const s = item?.sopa;
+      const cant = item?.cantidad || 1;
+      const isCompletado = item?.completado === true;
+      if (s && !isCompletado) acc[s] = (acc[s] || 0) + cant;
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const resumenArroz = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      if (item?.tipoPlato === 'arroz' && item?.completado !== true) {
+        const proteinaStr = item.proteina || '';
+        const cantidad = item.cantidad || 1;
+        const sizeMatch = proteinaStr.match(/\s+(pequeña|grande)$/i);
+        const tamaño = sizeMatch ? sizeMatch[1].toLowerCase() : 'pequeña';
+        const nombre = proteinaStr.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '').trim();
+
+        if (nombre) {
+          if (!acc[nombre]) acc[nombre] = { total: 0, pequeña: 0, grande: 0 };
+          acc[nombre].total += cantidad;
+          if (tamaño === 'grande') acc[nombre].grande += cantidad;
+          else acc[nombre].pequeña += cantidad;
+        }
+      }
+    });
+    return acc;
+  }, {} as Record<string, { total: number, pequeña: number, grande: number }>);
+
+  const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
+  const totalHoy = pedidos.length;
+  const yaEntregados = pedidos.filter(p => p.estado_entrega === 'entregado').length;
+  const faltaEntregar = totalHoy - yaEntregados;
   const pedidosFiltrados = pedidos.filter(p => p.beneficiario?.toLowerCase().includes(searchTerm.toLowerCase()));
 
   // Top-level split
@@ -160,11 +217,6 @@ export default function Despacho() {
   const sSnacks = porPagarList.filter(esSoloSnack);
   const sSopas = porPagarList.filter(p => esSoloSopa(p) && !esSoloArroz(p) && !esSoloSnack(p));
   const sRestaurante = porPagarList.filter(p => !esSoloArroz(p) && !esSoloSnack(p) && !esSoloSopa(p));
-
-  // Stats
-  const totalDespachar = pedidosFiltrados.length;
-  const entregados = pedidosFiltrados.filter(p => p.estado_entrega === 'entregado').length;
-  const porEntregar = totalDespachar - entregados;
 
   // ── Components ──
   const TopAccordion = ({ id, title, count, color, children }: any) => (
@@ -297,14 +349,85 @@ export default function Despacho() {
         </div>
       </div>
 
-      {/* Stats bar */}
-      {isToday && (
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 text-center"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Total</span><div className="text-2xl font-black">{totalDespachar}</div></div>
-          <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 text-center text-emerald-400"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Entregados</span><div className="text-2xl font-black">{entregados}</div></div>
-          <div className="bg-neutral-900 border border-orange-900/50 rounded-2xl p-3 text-center text-orange-400"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Pendientes</span><div className="text-2xl font-black">{porEntregar}</div></div>
+      {/* Production summary logic cards (like Cocina) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full">
+        {/* Proteínas pendientes */}
+        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Proteínas por Entregar</span>
+           <div className="grid grid-cols-2 gap-2 flex-1">
+             {Object.entries(resumenProteinas).map(([prot, cant]) => (
+               <div key={prot} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{prot}</span>
+                 <span className="text-lg font-black text-orange-400">{cant}</span>
+               </div>
+             ))}
+             {Object.keys(resumenProteinas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Todo entregado 🏆</span>}
+           </div>
         </div>
-      )}
+
+        {/* Sopas pendientes */}
+        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Sopas Pendientes</span>
+           <div className="grid grid-cols-2 gap-2 flex-1">
+             {Object.entries(resumenSopas).map(([sopa, cant]) => (
+               <div key={sopa} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{sopa}</span>
+                 <span className="text-lg font-black text-amber-500">{cant}</span>
+               </div>
+             ))}
+             {Object.keys(resumenSopas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Sin sopas pend. 🥣</span>}
+           </div>
+        </div>
+
+        {/* Arroces pendientes */}
+        <div className="bg-yellow-950/10 backdrop-blur-md border border-yellow-900/30 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-yellow-500/50 mb-3 text-center w-full tracking-widest">Arroces Pendientes ({totalArrocesPendientes})</span>
+           <div className="flex flex-wrap gap-2 justify-center">
+             {Object.entries(resumenArroz).map(([nombre, info]) => (
+               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl border border-yellow-900/20">
+                 <span className="text-xs text-neutral-400 mb-1">{nombre}</span>
+                 <div className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black text-yellow-500">{info.pequeña}</span>
+                        <span className="text-[8px] uppercase text-neutral-600">P</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black text-orange-500">{info.grande}</span>
+                        <span className="text-[8px] uppercase text-neutral-600">G</span>
+                    </div>
+                 </div>
+               </div>
+             ))}
+             {Object.keys(resumenArroz).length === 0 && <span className="text-center text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
+           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 lg:grid-cols-5 gap-3 mb-2 w-full">
+         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Total Hoy</span>
+            <span className="text-xl font-black text-white">{totalHoy}</span>
+         </div>
+         <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Check size={16} className="text-emerald-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Entregados</span>
+            <span className="text-xl font-black text-emerald-400">{yaEntregados}</span>
+         </div>
+         <div className="bg-neutral-900 border border-orange-900/50 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Clock size={16} className="text-orange-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Pendientes</span>
+            <span className="text-xl font-black text-orange-400">{faltaEntregar}</span>
+         </div>
+         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
+            <Flame size={16} className="text-orange-500 mb-1" />
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Por Salir</span>
+            <span className="text-xl font-black text-white">{pedidosFaltantes.length}</span>
+         </div>
+         <button onClick={() => setShowExtraModal(true)} className="flex flex-col items-center justify-center bg-emerald-600 hover:bg-emerald-700 rounded-2xl p-3 text-white transition-all shadow-lg shadow-emerald-900/20">
+            <Plus size={20} />
+            <span className="text-[10px] uppercase font-black tracking-widest mt-1">Extra</span>
+         </button>
+      </div>
 
       {loading ? (
         <div className="flex-1 flex justify-center items-center"><div className="w-8 h-8 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" /></div>

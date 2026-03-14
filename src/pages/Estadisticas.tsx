@@ -62,25 +62,49 @@ export default function Estadisticas() {
         const prot = it.proteina || '';
         const cant = it.cantidad || 1;
         const nombreLower = prot.toLowerCase();
+        const precioItem = it.valor || (p.valor / (items.length || 1));
         
         // Clasificación robusta
-        const keywordsArroz = ['arroz', 'trifasico', 'trifásico', 'cubano', 'especial', 'paella', 'chino'];
-        const standardProts = ['pechuga', 'alitas', 'cerdo', 'res', 'costilla', 'carne molida', 'punta de anca', 'lomo', 'pollo guisado', 'gallina', 'mojarra', 'pescado', 'higado', 'hígado'];
-        
         const esSnack = it.tipoPlato === 'snack' || (prot && esSnackDirecto(it));
-        const esArroz = it.tipoPlato === 'arroz' || (prot && keywordsArroz.some(k => nombreLower.includes(k)) && !standardProts.some(k => nombreLower.includes(k)));
+        
+        // Detección de Arroz: 
+        // 1. Explícito en tipoPlato
+        // 2. Por palabra clave específica
+        // 3. Por precio histórico ($5k, $8k, $10k, $13k, $15k) SOLAMENTE si contiene alguna referencia a arroz
+        
+        // Detección robusta de Arroz:
+        // Buscamos palabras clave obligatorias para evitar falsos positivos por precio
+        const esArroz = it.tipoPlato === 'arroz' || (prot && (
+          nombreLower.includes('arroz') || 
+          nombreLower.includes('trifasico') || 
+          nombreLower.includes('trifásico') || 
+          nombreLower.includes('cubano')
+        ));
 
-        if (esArroz) {
-          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande|mediano|pequeño|mediana|peque|portada)$/i, '').trim() || "Arroz";
+        if (esArroz && !esSnack && !nombreLower.includes('corriente')) {
+          // 1. Extraer cantidad real (ej: "2x Arroz...")
+          let cantidadReal = it.cantidad || 1;
+          const qtyMatch = prot.match(/^(\d+)x\s+/i);
+          if (qtyMatch) {
+            cantidadReal = parseInt(qtyMatch[1], 10);
+          }
+
+          // 2. Mapeo estricto a las 3 categorías
+          let nombreFinal = "";
+          if (nombreLower.includes('trifasico') || nombreLower.includes('trifásico')) nombreFinal = "Arroz Trifásico";
+          else if (nombreLower.includes('cubano')) nombreFinal = "Arroz Cubano";
+          else if (nombreLower.includes('pollo')) nombreFinal = "Arroz con Pollo";
           
-          // Legacy size logic: $10k+ es usualmente Grande/Mediano
-          const precioItem = it.valor || (p.valor / (items.length || 1));
+          if (!nombreFinal) return; // Si no es uno de los 3, no ensucies la gráfica
+
+          // 3. Clasificación de tamaño por precio ($10k+ suele ser Grande/Mediano)
+          // Usamos el valor individual si está disponible
           const esGrande = nombreLower.includes('grande') || nombreLower.includes('mediano') || precioItem >= 10000;
 
           if (esGrande) {
-            conteoArrozLarge[nombreBase] = (conteoArrozLarge[nombreBase] || 0) + cant;
+            conteoArrozLarge[nombreFinal] = (conteoArrozLarge[nombreFinal] || 0) + cantidadReal;
           } else {
-            conteoArrozSmall[nombreBase] = (conteoArrozSmall[nombreBase] || 0) + cant;
+            conteoArrozSmall[nombreFinal] = (conteoArrozSmall[nombreFinal] || 0) + cantidadReal;
           }
         } else if (esSnack) {
           let nombreBase = prot.replace(/^\d+x\s+/i, '').trim();
@@ -90,7 +114,7 @@ export default function Estadisticas() {
           conteoSnacks[nombreBase] = (conteoSnacks[nombreBase] || 0) + cant;
         } else {
           // Proteínas de restaurante (solo si tiene proteina y no es Solo Sopa)
-          if (prot && !nombreLower.includes('sopa') && prot !== 'Corriente') {
+          if (prot && !nombreLower.includes('sopa') && !nombreLower.includes('corriente')) {
             conteoProteinas[prot] = (conteoProteinas[prot] || 0) + cant;
           }
         }

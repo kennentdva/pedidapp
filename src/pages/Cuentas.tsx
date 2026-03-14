@@ -292,6 +292,16 @@ export default function Cuentas() {
     setSavingHistorico(false);
   };
 
+  const normalizeStr = (str: string) => {
+    return (str || '')
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Quitar acentos
+      .replace(/\b(profesor|profe|docente|licenciado|lic|ingeniero|ing|doctora|doctor|dra|dr|señora|señor|sr|sra)\b/gi, "") // Quitar títulos comunes
+      .replace(/\s+/g, ' ') // Normalizar espacios
+      .trim();
+  };
+
   const analizarTextoMasivo = () => {
     if (!textoMasivo.trim()) return;
     
@@ -300,6 +310,7 @@ export default function Cuentas() {
 
     lineas.forEach((linea, index) => {
        const lowerLinea = linea.toLowerCase();
+       const normL = normalizeStr(linea);
        let isPagado = false;
        
        // Detectar si está pagado
@@ -307,27 +318,54 @@ export default function Cuentas() {
           isPagado = true;
        }
 
-       // Intentar encontrar proteína
-       let proteinaEncontrada = menuConfig.proteinas.find(p => lowerLinea.includes(p.toLowerCase())) || 'Corriente';
+       // Intentar encontrar proteína (coincidencia parcial normalizada)
+       let proteinaEncontrada = menuConfig.proteinas.find(p => {
+         const normP = normalizeStr(p);
+         return normL.includes(normP) || normP.includes(normL);
+       }) || 'Corriente';
        
        // Intentar encontrar sopa
-       let sopaEncontrada = lowerLinea.includes('sin sopa') ? '' : (lowerLinea.includes('sopa') ? (menuConfig.sopas[0] || 'Sopa del día') : '');
+       let sopaEncontrada = '';
+       if (!lowerLinea.includes('sin sopa')) {
+          // 1. Buscar coincidencia exacta en el menú configurado
+          sopaEncontrada = menuConfig.sopas.find(s => normL.includes(normalizeStr(s))) || '';
+          
+          // 2. Si no hay coincidencia en el menú, buscar palabras clave comunes de sopas
+          if (!sopaEncontrada) {
+             const keywordsSopa = ['mote', 'ajiaco', 'frijol', 'lenteja', 'verdura', 'hueso', 'carne salada', 'sancocho', 'mondongo'];
+             const sopaKey = keywordsSopa.find(k => normL.includes(normalizeStr(k)));
+             if (sopaKey) {
+                // Capitalizar primera letra para estética
+                sopaEncontrada = sopaKey.charAt(0).toUpperCase() + sopaKey.slice(1);
+             } else if (lowerLinea.includes('sopa')) {
+                sopaEncontrada = menuConfig.sopas[0] || 'Sopa del día';
+             }
+          }
+       }
        
-       // Limpiar un poco el nombre (estrategia súper básica: tomar las primeras palabras antes de encontrar comida)
+       // Limpiar el nombre del cliente
        const palabras = linea.split(' ');
        let posibleNombre = '';
        for (const word of palabras) {
           const wLow = word.toLowerCase();
-          if (menuConfig.proteinas.some(p => p.toLowerCase().includes(wLow)) || 
-              wLow === 'con' || wLow === 'sin' || wLow === 'sopa' || wLow === 'pago') {
+          const wNorm = normalizeStr(word);
+          
+          // Si la palabra normalizada coincide con comida o acciones, paramos
+          if (menuConfig.proteinas.some(p => normalizeStr(p).includes(wNorm)) || 
+              wLow === 'con' || wLow === 'sin' || wLow === 'sopa' || wLow === 'pago' || 
+              ['mote', 'ajiaco', 'frijoles', 'lentejas'].some(s => wNorm.includes(s))) {
              break;
           }
           posibleNombre += word + ' ';
        }
        posibleNombre = posibleNombre.trim() || `Usuario ${index + 1}`;
 
-       // Buscar cliente existente
-       const clienteExistente = clientes.find(c => c.nombre.toLowerCase().includes(posibleNombre.toLowerCase()) || posibleNombre.toLowerCase().includes(c.nombre.toLowerCase()));
+       // Buscar cliente existente (normalizado)
+       const normPosible = normalizeStr(posibleNombre);
+       const clienteExistente = clientes.find(c => {
+         const normC = normalizeStr(c.nombre);
+         return normC.includes(normPosible) || normPosible.includes(normC);
+       });
 
        parsedItems.push({
           id_temp: Date.now() + index,
@@ -337,7 +375,6 @@ export default function Cuentas() {
           proteina: proteinaEncontrada,
           sopa: sopaEncontrada,
           pagado: isPagado,
-          // Precio sugerido básico (se puede editar)
           precio: sopaEncontrada ? 15000 : 13000
        });
     });
