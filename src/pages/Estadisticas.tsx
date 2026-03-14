@@ -24,8 +24,13 @@ export default function Estadisticas() {
   const fetchData = async () => {
     setLoading(true);
     
-    // Traer todos los pedidos excepto la configuración del menú
-    const { data: pedidosData } = await supabase.from('pedidos').select('*').not('responsable_id', 'eq', MENU_CONFIG_ID);
+    // Aumentar el rango de búsqueda a 5000 pedidos para historial amplio
+    const { data: pedidosData } = await supabase.from('pedidos')
+      .select('*')
+      .not('responsable_id', 'eq', MENU_CONFIG_ID)
+      .order('created_at', { ascending: false })
+      .range(0, 4999);
+      
     const { data: pagosData } = await supabase.from('pagos').select('*');
 
     if (pedidosData && pagosData) {
@@ -51,25 +56,25 @@ export default function Estadisticas() {
       const items = (p.detalle as any)?.items || [p.detalle];
       
       items.forEach((it: any) => {
-        if (!it || (!it.proteina && !it.sopa)) return;
+        if (!it) return;
         
+        // Soporte para items legacy (pueden venir de formas variadas)
         const prot = it.proteina || '';
         const cant = it.cantidad || 1;
         const nombreLower = prot.toLowerCase();
         
-        // Detección de Arroz (incluye legacy por nombre)
-        const keywordsArroz = ['arroz', 'trifasico', 'trifásico', 'cubano', 'pollo especial'];
-        const esArroz = it.tipoPlato === 'arroz' || keywordsArroz.some(k => nombreLower.includes(k));
-        // Detección de Snack (incluye legacy por nombre)
-        const esSnack = it.tipoPlato === 'snack' || esSnackDirecto(it);
+        // Clasificación robusta
+        const keywordsArroz = ['arroz', 'trifasico', 'trifásico', 'cubano', 'especial', 'paella', 'chino'];
+        const standardProts = ['pechuga', 'alitas', 'cerdo', 'res', 'costilla', 'carne molida', 'punta de anca', 'lomo', 'pollo guisado', 'gallina', 'mojarra', 'pescado', 'higado', 'hígado'];
+        
+        const esSnack = it.tipoPlato === 'snack' || (prot && esSnackDirecto(it));
+        const esArroz = it.tipoPlato === 'arroz' || (prot && keywordsArroz.some(k => nombreLower.includes(k)) && !standardProts.some(k => nombreLower.includes(k)));
 
         if (esArroz) {
-          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande|mediano|pequeño|mediana)$/i, '').trim();
+          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande|mediano|pequeño|mediana|peque|portada)$/i, '').trim() || "Arroz";
           
-          // Determinar tamaño:
-          // 1. Por texto
-          // 2. Por precio (Legacy: 10k o 13k es Grande/Mediano, 5k o 8k es Pequeño)
-          const precioItem = it.valor || (p.valor / items.length);
+          // Legacy size logic: $10k+ es usualmente Grande/Mediano
+          const precioItem = it.valor || (p.valor / (items.length || 1));
           const esGrande = nombreLower.includes('grande') || nombreLower.includes('mediano') || precioItem >= 10000;
 
           if (esGrande) {
@@ -84,22 +89,22 @@ export default function Estadisticas() {
           }
           conteoSnacks[nombreBase] = (conteoSnacks[nombreBase] || 0) + cant;
         } else {
-          // Proteínas de restaurante
-          if (prot && prot !== 'Corriente' && prot !== 'Solo Sopa' && prot !== 'Solo sopa') {
+          // Proteínas de restaurante (solo si tiene proteina y no es Solo Sopa)
+          if (prot && !nombreLower.includes('sopa') && prot !== 'Corriente') {
             conteoProteinas[prot] = (conteoProteinas[prot] || 0) + cant;
           }
         }
 
         const sopa = it.sopa;
-        if (sopa && sopa !== 'Sin Sopa' && sopa !== 'No') {
+        if (sopa && !sopa.toLowerCase().includes('sin') && !sopa.toLowerCase().includes('no')) {
           conteoSopas[sopa] = (conteoSopas[sopa] || 0) + cant;
         }
       });
 
       if (p.created_at) {
-        // Normalizar a fecha de Colombia (UTC-5) para indexar el día correctamente
+        // Normalizar a fecha de Colombia (UTC-5)
         const dateObj = new Date(p.created_at);
-        // Ajuste manual para que el getUTCDay() coincida con el día local de Colombia
+        // Desplazamiento de 5 horas para Colombia desde UTC
         const colombiaTime = new Date(dateObj.getTime() - (5 * 60 * 60 * 1000));
         const diaNombre = diasLetras[colombiaTime.getUTCDay()];
         
