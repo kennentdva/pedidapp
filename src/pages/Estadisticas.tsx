@@ -58,13 +58,21 @@ export default function Estadisticas() {
         const nombreLower = prot.toLowerCase();
         
         // Detección de Arroz (incluye legacy por nombre)
-        const esArroz = it.tipoPlato === 'arroz' || nombreLower.includes('arroz');
+        const keywordsArroz = ['arroz', 'trifasico', 'trifásico', 'cubano', 'pollo especial'];
+        const esArroz = it.tipoPlato === 'arroz' || keywordsArroz.some(k => nombreLower.includes(k));
         // Detección de Snack (incluye legacy por nombre)
         const esSnack = it.tipoPlato === 'snack' || esSnackDirecto(it);
 
         if (esArroz) {
-          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '').trim();
-          if (nombreLower.includes('grande')) {
+          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande|mediano|pequeño|mediana)$/i, '').trim();
+          
+          // Determinar tamaño:
+          // 1. Por texto
+          // 2. Por precio (Legacy: 10k o 13k es Grande/Mediano, 5k o 8k es Pequeño)
+          const precioItem = it.valor || (p.valor / items.length);
+          const esGrande = nombreLower.includes('grande') || nombreLower.includes('mediano') || precioItem >= 10000;
+
+          if (esGrande) {
             conteoArrozLarge[nombreBase] = (conteoArrozLarge[nombreBase] || 0) + cant;
           } else {
             conteoArrozSmall[nombreBase] = (conteoArrozSmall[nombreBase] || 0) + cant;
