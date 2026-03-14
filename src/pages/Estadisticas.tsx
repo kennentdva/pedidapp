@@ -10,7 +10,8 @@ export default function Estadisticas() {
   const [loading, setLoading] = useState(true);
   const [ventasTop, setVentasTop] = useState<any[]>([]);
   const [snacksTop, setSnacksTop] = useState<any[]>([]);
-  const [arrozTop, setArrozTop] = useState<any[]>([]);
+  const [arrozSmallTop, setArrozSmallTop] = useState<any[]>([]);
+  const [arrozLargeTop, setArrozLargeTop] = useState<any[]>([]);
   const [ingresosGrafico, setIngresosGrafico] = useState<any[]>([]);
   const [proyeccionInventario, setProyeccionInventario] = useState<any[]>([]);
   const [sopasTop, setSopasTop] = useState<any[]>([]);
@@ -23,6 +24,7 @@ export default function Estadisticas() {
   const fetchData = async () => {
     setLoading(true);
     
+    // Traer todos los pedidos excepto la configuración del menú
     const { data: pedidosData } = await supabase.from('pedidos').select('*').not('responsable_id', 'eq', MENU_CONFIG_ID);
     const { data: pagosData } = await supabase.from('pagos').select('*');
 
@@ -37,7 +39,8 @@ export default function Estadisticas() {
   const procesarGraficos = (pedidos: Pedido[], pagos: any[]) => {
     const conteoProteinas: Record<string, number> = {};
     const conteoSnacks: Record<string, number> = {};
-    const conteoArroz: Record<string, number> = {};
+    const conteoArrozSmall: Record<string, number> = {};
+    const conteoArrozLarge: Record<string, number> = {};
     const conteoSopas: Record<string, number> = {};
     const conteoDiasSemana: Record<string, number> = {
       'Lunes': 0, 'Martes': 0, 'Miércoles': 0, 'Jueves': 0, 'Viernes': 0, 'Sábado': 0, 'Domingo': 0
@@ -48,29 +51,33 @@ export default function Estadisticas() {
       const items = (p.detalle as any)?.items || [p.detalle];
       
       items.forEach((it: any) => {
-        if (!it || !it.proteina) return;
+        if (!it || (!it.proteina && !it.sopa)) return;
         
-        const prot = it.proteina;
+        const prot = it.proteina || '';
         const cant = it.cantidad || 1;
-        const tipo = it.tipoPlato || (esSnackDirecto(it) ? 'snack' : 'restaurante');
+        const nombreLower = prot.toLowerCase();
+        
+        // Detección de Arroz (incluye legacy por nombre)
+        const esArroz = it.tipoPlato === 'arroz' || nombreLower.includes('arroz');
+        // Detección de Snack (incluye legacy por nombre)
+        const esSnack = it.tipoPlato === 'snack' || esSnackDirecto(it);
 
-        if (tipo === 'arroz') {
-          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '');
-          conteoArroz[nombreBase] = (conteoArroz[nombreBase] || 0) + cant;
-        } else if (tipo === 'snack') {
-          // Agrupar Bolis y Helados
-          let nombreBase = prot.replace(/^\d+x\s+/i, '');
+        if (esArroz) {
+          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '').trim();
+          if (nombreLower.includes('grande')) {
+            conteoArrozLarge[nombreBase] = (conteoArrozLarge[nombreBase] || 0) + cant;
+          } else {
+            conteoArrozSmall[nombreBase] = (conteoArrozSmall[nombreBase] || 0) + cant;
+          }
+        } else if (esSnack) {
+          let nombreBase = prot.replace(/^\d+x\s+/i, '').trim();
           if (nombreBase.toLowerCase().includes('boli') || nombreBase.toLowerCase().includes('helado')) {
              nombreBase = "Bolis y Helados";
           }
           conteoSnacks[nombreBase] = (conteoSnacks[nombreBase] || 0) + cant;
         } else {
-          // Excluir explícitamente: "Corriente", "Solo Sopa" y nombres que parezcan arroz
-          const nombreLower = prot.toLowerCase();
-          const esExcluido = prot === 'Corriente' || prot === 'Solo Sopa' || prot === 'Solo sopa' ||
-            nombreLower.includes('arroz') || nombreLower.includes('sopa guisada') ||
-            tipo === 'arroz'; // Seguridad extra
-          if (!esExcluido) {
+          // Proteínas de restaurante
+          if (prot && prot !== 'Corriente' && prot !== 'Solo Sopa' && prot !== 'Solo sopa') {
             conteoProteinas[prot] = (conteoProteinas[prot] || 0) + cant;
           }
         }
@@ -82,45 +89,35 @@ export default function Estadisticas() {
       });
 
       if (p.created_at) {
-        // Usar hora local de Colombia (UTC-5) para asignar el día correcto
-        const d = new Date(new Date(p.created_at).getTime() - 5 * 60 * 60 * 1000);
-        const diaNombre = diasLetras[d.getUTCDay()];
+        // Normalizar a fecha de Colombia (UTC-5) para indexar el día correctamente
+        const dateObj = new Date(p.created_at);
+        // Ajuste manual para que el getUTCDay() coincida con el día local de Colombia
+        const colombiaTime = new Date(dateObj.getTime() - (5 * 60 * 60 * 1000));
+        const diaNombre = diasLetras[colombiaTime.getUTCDay()];
+        
         const totalItemsDia = items.reduce((acc: number, curr: any) => acc + (curr?.cantidad || 1), 0);
-        conteoDiasSemana[diaNombre] = (conteoDiasSemana[diaNombre] || 0) + totalItemsDia;
+        if (conteoDiasSemana[diaNombre] !== undefined) {
+          conteoDiasSemana[diaNombre] += totalItemsDia;
+        }
       }
     });
 
     // Helper para detectar snacks en pedidos VIEJOS sin tipoPlato
-    // Solo clasificar como snack si el nombre contiene palabras clave de snack
     function esSnackDirecto(it: any) {
       if (it.tipoPlato === 'snack') return true;
-      if (it.tipoPlato && it.tipoPlato !== 'snack') return false; // tipoPlato definido y no es snack → no es snack
-      // Sin tipoPlato: usar nombre como heurística (solo si parece snack)
+      if (it.tipoPlato && it.tipoPlato !== 'snack') return false;
       const nombre = (it.proteina || '').toLowerCase();
       return nombre.includes('boli') || nombre.includes('helado') || nombre.includes('paleta') || nombre.includes('gaseosa') || nombre.includes('jugo');
     }
     
-    const arrProteinas = Object.entries(conteoProteinas)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5); // Top 5
-    setVentasTop(arrProteinas);
+    // Transformar a arreglos para Recharts
+    const mapper = (entries: [string, number][]) => entries.map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 
-    const arrSnacks = Object.entries(conteoSnacks)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-    setSnacksTop(arrSnacks);
-
-    const arrArroz = Object.entries(conteoArroz)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-    setArrozTop(arrArroz);
-
-    const arrSopas = Object.entries(conteoSopas)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
-    setSopasTop(arrSopas);
+    setVentasTop(mapper(Object.entries(conteoProteinas)).slice(0, 5));
+    setSnacksTop(mapper(Object.entries(conteoSnacks)));
+    setArrozSmallTop(mapper(Object.entries(conteoArrozSmall)));
+    setArrozLargeTop(mapper(Object.entries(conteoArrozLarge)));
+    setSopasTop(mapper(Object.entries(conteoSopas)).slice(0, 5));
 
     const arrFlujo = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => ({
       dia,
@@ -140,9 +137,8 @@ export default function Estadisticas() {
          .reduce((acc, curr) => acc + curr.monto, 0);
 
        const arr = fecha.split('-');
-       let d = arr[2]; let m = arr[1];
        return {
-          fecha: `${d}/${m}`,
+          fecha: `${arr[2]}/${arr[1]}`,
           ingresos: ingresosDia
        };
     });
@@ -285,19 +281,19 @@ export default function Estadisticas() {
               )}
            </div>
 
-           {/* Arroces Especiales */}
+           {/* Arroces Especiales Pequeños */}
            <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-xl flex flex-col items-center">
               <h3 className="text-xl font-black w-full text-left mb-6 flex gap-2 items-center">
-                <Wheat className="text-yellow-400"/> Arroces Especiales Más Vendidos
+                <Wheat className="text-yellow-400"/> Arroces Pequeños Más Vendidos
               </h3>
               <div className="w-full h-64">
-                {arrozTop.length > 0 ? (
+                {arrozSmallTop.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={arrozTop} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value"
+                      <Pie data={arrozSmallTop} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value"
                         label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`} labelLine={false}>
-                        {arrozTop.map((_entry, index) => (
-                          <Cell key={`cell-arroz-${index}`} fill={COLORS_ARROZ[index % COLORS_ARROZ.length]} />
+                        {arrozSmallTop.map((_, index) => (
+                          <Cell key={`cell-arroz-s-${index}`} fill={COLORS_ARROZ[index % COLORS_ARROZ.length]} />
                         ))}
                       </Pie>
                       <Tooltip contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '12px', color: '#fff' }} itemStyle={{ color: '#fff', fontWeight: 'bold' }} />
@@ -306,17 +302,55 @@ export default function Estadisticas() {
                 ) : (
                    <div className="h-full flex flex-col items-center justify-center text-neutral-500 font-bold gap-2">
                      <Wheat size={32} className="opacity-30" />
-                     Sin arroces especiales vendidos aún
+                     Sin arroces pequeños vendidos
                    </div>
                 )}
               </div>
-              {arrozTop.length > 0 && (
+              {arrozSmallTop.length > 0 && (
                 <div className="w-full mt-4 grid grid-cols-2 gap-2">
-                  {arrozTop.map((a, i) => (
-                    <div key={a.name} className="flex items-center gap-2 bg-neutral-950 rounded-xl px-3 py-2">
-                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: COLORS_ARROZ[i % COLORS_ARROZ.length] }} />
-                      <span className="text-sm font-bold text-white truncate">{a.name}</span>
-                      <span className="text-sm font-black text-yellow-400 ml-auto">{a.value}</span>
+                  {arrozSmallTop.map((a, i) => (
+                    <div key={a.name} className="flex items-center gap-2 bg-neutral-950 rounded-xl px-3 py-1">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS_ARROZ[i % COLORS_ARROZ.length] }} />
+                      <span className="text-xs font-bold text-white truncate">{a.name}</span>
+                      <span className="text-xs font-black text-yellow-400 ml-auto">{a.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+           </div>
+
+           {/* Arroces Especiales Grandes */}
+           <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-xl flex flex-col items-center">
+              <h3 className="text-xl font-black w-full text-left mb-6 flex gap-2 items-center">
+                <Wheat className="text-orange-400"/> Arroces Grandes Más Vendidos
+              </h3>
+              <div className="w-full h-64">
+                {arrozLargeTop.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={arrozLargeTop} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value"
+                        label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`} labelLine={false}>
+                        {arrozLargeTop.map((_, index) => (
+                          <Cell key={`cell-arroz-l-${index}`} fill={COLORS_ARROZ[index % COLORS_ARROZ.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '12px', color: '#fff' }} itemStyle={{ color: '#fff', fontWeight: 'bold' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                   <div className="h-full flex flex-col items-center justify-center text-neutral-500 font-bold gap-2">
+                     <Wheat size={32} className="opacity-30" />
+                     Sin arroces grandes vendidos
+                   </div>
+                )}
+              </div>
+              {arrozLargeTop.length > 0 && (
+                <div className="w-full mt-4 grid grid-cols-2 gap-2">
+                  {arrozLargeTop.map((a, i) => (
+                    <div key={a.name} className="flex items-center gap-2 bg-neutral-950 rounded-xl px-3 py-1">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS_ARROZ[i % COLORS_ARROZ.length] }} />
+                      <span className="text-xs font-bold text-white truncate">{a.name}</span>
+                      <span className="text-xs font-black text-orange-400 ml-auto">{a.value}</span>
                     </div>
                   ))}
                 </div>
