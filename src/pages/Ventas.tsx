@@ -87,7 +87,17 @@ export default function Ventas() {
 
   const handleSubmit = async () => {
     const itemsFinales: ItemPedido[] = [...store.carrito];
-    if (hayItemActual) itemsFinales.push({ proteina: store.detalle.proteina, acompanamientos: store.detalle.acompanamientos, sopa: store.detalle.sopa, extras: store.detalle.extras, nota: store.detalle.nota, tipoPlato: store.detalle.tipoPlato, valor: store.valorBase });
+    if (hayItemActual) itemsFinales.push({ 
+      proteina: store.detalle.proteina, 
+      acompanamientos: store.detalle.acompanamientos, 
+      sopa: store.detalle.sopa, 
+      extras: store.detalle.extras, 
+      nota: store.detalle.nota, 
+      tipoPlato: store.detalle.tipoPlato, 
+      valor: store.valorBase,
+      cantidad: 1,
+      completado: false
+    });
     if (itemsFinales.length === 0) { alert("Agrega al menos una comida."); return; }
     if (!store.responsable && !store.beneficiario.trim()) { alert("Selecciona un cliente o ingresa el beneficiario."); return; }
     setSaving(true);

@@ -92,7 +92,17 @@ export default function Cocina() {
   const getItems = (p: Pedido): any[] => {
     const items = (p.detalle as any)?.items;
     if (items && Array.isArray(items) && items.length > 0) return items;
-    return [{ proteina: p.detalle?.proteina, sopa: p.detalle?.sopa, acompanamientos: p.detalle?.acompanamientos ?? [], extras: p.detalle?.extras ?? [], nota: p.detalle?.nota, tipoPlato: p.detalle?.tipoPlato }];
+    return [{ 
+      proteina: p.detalle?.proteina, 
+      sopa: p.detalle?.sopa, 
+      acompanamientos: p.detalle?.acompanamientos ?? [], 
+      extras: p.detalle?.extras ?? [], 
+      nota: p.detalle?.nota, 
+      tipoPlato: p.detalle?.tipoPlato,
+      valor: p.valor,
+      cantidad: 1,
+      completado: p.estado_cocina === 'empacado'
+    }];
   };
 
   // Dashboard counters

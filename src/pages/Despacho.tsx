@@ -91,7 +91,16 @@ export default function Despacho() {
     if (!extraProteina) return alert('Seleccione proteína');
     const nuevoPedido = {
       beneficiario: 'Extra Stock',
-      detalle: { proteina: extraProteina, sopa: extraSopa === 'Sin Sopa' ? null : extraSopa, acompanamientos: [], nota: 'Extra Despacho' },
+      detalle: { 
+        proteina: extraProteina, 
+        sopa: extraSopa === 'Sin Sopa' ? null : extraSopa, 
+        acompanamientos: [], 
+        nota: 'Extra Despacho',
+        tipoPlato: 'normal',
+        valor: 14000,
+        cantidad: 1,
+        completado: false
+      },
       valor: 14000, pagado: false, estado_cocina: 'empacado', estado_entrega: 'en_espera'
     };
     await supabase.from('pedidos').insert([nuevoPedido]);
@@ -101,7 +110,16 @@ export default function Despacho() {
   const agregarSnackRapido = async (pedido: Pedido, snackNombre: string) => {
     let items = [...((pedido.detalle as any).items || [])];
     if (items.length === 0 && pedido.detalle.proteina) {
-      items.push({ proteina: pedido.detalle.proteina, cantidad: 1, tipoPlato: pedido.detalle.tipoPlato || 'restaurante', acompanamientos: pedido.detalle.acompanamientos || [], sopa: pedido.detalle.sopa || null, completado: false });
+      items.push({ 
+        proteina: pedido.detalle.proteina, 
+        cantidad: 1, 
+        tipoPlato: pedido.detalle.tipoPlato || 'normal', 
+        acompanamientos: pedido.detalle.acompanamientos || [], 
+        sopa: pedido.detalle.sopa || null, 
+        completado: false,
+        valor: pedido.valor,
+        extras: pedido.detalle.extras || []
+      });
     }
     const snackPrecios: Record<string, number> = { 'Boli': 2000, 'Helado': 3000 };
     const precio = snackPrecios[snackNombre] || 2000;
@@ -109,7 +127,16 @@ export default function Despacho() {
     if (existingIdx >= 0) {
       items[existingIdx].cantidad = (items[existingIdx].cantidad || 1) + 1;
     } else {
-      items.push({ proteina: snackNombre, cantidad: 1, tipoPlato: 'snack', completado: false });
+      items.push({ 
+        proteina: snackNombre, 
+        cantidad: 1, 
+        tipoPlato: 'snack', 
+        completado: false,
+        valor: precio,
+        acompanamientos: [],
+        sopa: null,
+        extras: []
+      });
     }
     const nuevoDetalle = { ...pedido.detalle, items };
     const nuevoValor = pedido.valor + precio;
