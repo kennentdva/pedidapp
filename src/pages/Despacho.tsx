@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Truck, Calendar, Trash2, Edit2, Search, CheckSquare, Plus, X, Flame } from 'lucide-react';
+import { Truck, Calendar, Trash2, Edit2, Search, Plus, X, ChevronDown } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
 import { getColombiaDateString, getColombiaStartOfDay, getColombiaEndOfDay } from '../lib/dateUtils';
 
@@ -19,6 +19,10 @@ export default function Despacho() {
   const [extraSopa, setExtraSopa] = useState('');
   const [pedidoToDelete, setPedidoToDelete] = useState<string | null>(null);
   const menuConfig = useOrderStore(state => state.menuConfig);
+
+  // 2-level accordion state: top-level (porPagar, pagados) + sub-categories
+  const [openTop, setOpenTop] = useState<Record<string, boolean>>({ porPagar: true, pagados: false });
+  const [openSub, setOpenSub] = useState<Record<string, boolean>>({ listos: true, arroces: false, snacks: false, sopas: false, restaurante: true });
 
   useEffect(() => { fetchPedidosPorFecha(); fetchClientes(); }, [fecha]);
 
@@ -44,23 +48,10 @@ export default function Despacho() {
 
   const togglePagado = async (p: Pedido) => {
     const nuevoEstado = !p.pagado;
-    
-    // Si intentamos marcar como pagado y el pedido tiene responsable (va a cuenta corriente)
     if (nuevoEstado && p.responsable_id) {
-      const { error: errPago } = await supabase.from('pagos').insert([{ 
-        cliente_id: p.responsable_id, 
-        monto: p.valor, 
-        metodo: 'Efectivo' 
-      }]);
-      
-      // Si el pago falla (ej. error de internet o restricción de base de datos), abortamos
-      if (errPago) {
-         console.error("Error al registrar el pago en despacho:", errPago);
-         alert("Hubo un error al registrar el pago: " + errPago.message);
-         return;
-      }
+      const { error: errPago } = await supabase.from('pagos').insert([{ client_id: p.responsable_id, monto: p.valor, metodo: 'Efectivo' }]);
+      if (errPago) { alert('Error al registrar el pago'); return; }
     }
-    
     await supabase.from('pedidos').update({ pagado: nuevoEstado }).eq('id', p.id);
     fetchPedidosPorFecha();
   };
@@ -73,9 +64,7 @@ export default function Despacho() {
     fetchPedidosPorFecha();
   };
 
-  const eliminarPedido = (id: string) => {
-    setPedidoToDelete(id);
-  };
+  const eliminarPedido = (id: string) => setPedidoToDelete(id);
 
   const confirmarEliminarPedido = async () => {
     if (!pedidoToDelete) return;
@@ -99,328 +88,322 @@ export default function Despacho() {
   };
 
   const crearPorcionExtra = async () => {
-    if (!extraProteina) return alert('Debes seleccionar al menos la proteína.');
+    if (!extraProteina) return alert('Seleccione proteína');
     const nuevoPedido = {
-      beneficiario: 'Porción Extra (Stock)',
-      detalle: { proteina: extraProteina, sopa: extraSopa === 'Sin Sopa' ? null : extraSopa, acompanamientos: [], cantidades: {}, nota: 'Creado en Despacho', esSnack: false },
+      beneficiario: 'Extra Stock',
+      detalle: { proteina: extraProteina, sopa: extraSopa === 'Sin Sopa' ? null : extraSopa, acompanamientos: [], nota: 'Extra Despacho' },
       valor: 14000, pagado: false, estado_cocina: 'empacado', estado_entrega: 'en_espera'
     };
-    const { error } = await supabase.from('pedidos').insert([nuevoPedido]);
-    if (!error) { setShowExtraModal(false); setExtraProteina(''); setExtraSopa(''); fetchPedidosPorFecha(); }
-    else alert('Error al crear porción extra');
+    await supabase.from('pedidos').insert([nuevoPedido]);
+    setShowExtraModal(false); setExtraProteina(''); setExtraSopa(''); fetchPedidosPorFecha();
   };
 
-  // ── Classify orders ──
-  // Multi-item (items array) → always restaurante
-  // Arroz especial (tipoPlato='arroz') → restaurante 
-  // Explicit snack (tipoPlato='snack') → snack
-  // Heuristic (no acomp, no sopa, non-standard protein) → snack
-  const esSnackDirecto = (p: Pedido) => {
-    if ((p.detalle as any)?.items) return false;
-    if (p.detalle.tipoPlato === 'arroz') return false;
-    if (p.detalle.tipoPlato === 'snack') return true;
-    return (
-      p.detalle.acompanamientos.length === 0 &&
-      !p.detalle.sopa &&
-      !!p.detalle.proteina &&
-      !['Pechuga', 'Alitas', 'Cerdo', 'Res', 'Solo Sopa'].includes(p.detalle.proteina ?? '')
-    );
+  const agregarSnackRapido = async (pedido: Pedido, snackNombre: string) => {
+    let items = [...((pedido.detalle as any).items || [])];
+    if (items.length === 0 && pedido.detalle.proteina) {
+      items.push({ proteina: pedido.detalle.proteina, cantidad: 1, tipoPlato: pedido.detalle.tipoPlato || 'restaurante', acompanamientos: pedido.detalle.acompanamientos || [], sopa: pedido.detalle.sopa || null, completado: false });
+    }
+    const snackPrecios: Record<string, number> = { 'Boli': 2000, 'Helado': 3000 };
+    const precio = snackPrecios[snackNombre] || 2000;
+    const existingIdx = items.findIndex((it: any) => it.proteina === snackNombre);
+    if (existingIdx >= 0) {
+      items[existingIdx].cantidad = (items[existingIdx].cantidad || 1) + 1;
+    } else {
+      items.push({ proteina: snackNombre, cantidad: 1, tipoPlato: 'snack', completado: false });
+    }
+    const nuevoDetalle = { ...pedido.detalle, items };
+    const nuevoValor = pedido.valor + precio;
+    await supabase.from('pedidos').update({ detalle: nuevoDetalle, valor: nuevoValor }).eq('id', pedido.id!);
+    fetchPedidosPorFecha();
   };
 
-  // Helper: get short detalle description
+  const toggleItemCompletado = async (p: Pedido, index: number) => {
+    const items = [...((p.detalle as any).items || [])];
+    if (items[index]) {
+      items[index].completado = !items[index].completado;
+      const nuevoDetalle = { ...p.detalle, items };
+      setPedidos(prev => prev.map(item => item.id === p.id ? { ...item, detalle: nuevoDetalle as any } : item));
+      await supabase.from('pedidos').update({ detalle: nuevoDetalle }).eq('id', p.id!);
+    }
+  };
+
   const detalleText = (p: Pedido) => {
     const d = p.detalle as any;
-    if (d?.items) return `${d.items.length} ítems: ${d.items.map((i: any) => i.proteina).join(', ')}`;
-    if (p.detalle.proteina) {
-      let t = p.detalle.proteina;
-      if (p.detalle.acompanamientos?.length) t += ' + ' + p.detalle.acompanamientos.join(', ');
-      return t;
+    if (d?.items) {
+      return d.items.map((i: any) => {
+        const pStr = i.proteina === 'Solo Sopa' ? (i.sopa || 'Sopa') : (i.proteina || '');
+        const sStr = (i.sopa && i.proteina !== 'Solo Sopa') ? ` + ${i.sopa}` : '';
+        const cantStr = (i.cantidad || 1) > 1 ? `${i.cantidad}x ` : '';
+        return `${cantStr}${pStr}${sStr}`;
+      }).join(', ');
     }
-    return '';
+    const baseProt = d.proteina === 'Solo Sopa' ? (d.sopa || 'Sopa') : (d.proteina || '');
+    const baseSopa = (d.sopa && d.proteina !== 'Solo Sopa') ? ` + ${d.sopa}` : '';
+    return `${baseProt}${baseSopa}`;
   };
+
+  // ── Categorization helpers ──
+  const esSoloArroz = (p: Pedido) => (p.detalle as any)?.items?.every((i: any) => i.tipoPlato === 'arroz') || p.detalle.tipoPlato === 'arroz';
+  const esSoloSnack = (p: Pedido) => (p.detalle as any)?.items?.every((i: any) => i.tipoPlato === 'snack') || p.detalle.tipoPlato === 'snack';
+  const esSoloSopa = (p: Pedido) => (p.detalle as any)?.items?.every((i: any) => i.proteina === 'Solo Sopa') || p.detalle.proteina === 'Solo Sopa';
 
   const isToday = fecha === getColombiaDateString();
   const pedidosFiltrados = pedidos.filter(p => p.beneficiario?.toLowerCase().includes(searchTerm.toLowerCase()));
-  const pedidosRestaurante = pedidosFiltrados.filter(p => !esSnackDirecto(p));
-  const pedidosSnacks = pedidosFiltrados.filter(p => esSnackDirecto(p));
-  const listosParaEntregar = pedidosRestaurante.filter(p => p.estado_cocina === 'empacado' && p.estado_entrega === 'en_espera');
-  const totalDespachar = pedidosRestaurante.length;
-  const entregados = pedidosRestaurante.filter(p => p.estado_entrega === 'entregado').length;
+
+  // Top-level split
+  const porPagarList = pedidosFiltrados.filter(p => !p.pagado);
+  const pagadosList = pedidosFiltrados.filter(p => p.pagado);
+
+  // Sub-categories within "Por Pagar"
+  const listosParaEntregar = porPagarList.filter(p => p.estado_cocina === 'empacado' && p.estado_entrega === 'en_espera');
+  const sArroces = porPagarList.filter(esSoloArroz);
+  const sSnacks = porPagarList.filter(esSoloSnack);
+  const sSopas = porPagarList.filter(p => esSoloSopa(p) && !esSoloArroz(p) && !esSoloSnack(p));
+  const sRestaurante = porPagarList.filter(p => !esSoloArroz(p) && !esSoloSnack(p) && !esSoloSopa(p));
+
+  // Stats
+  const totalDespachar = pedidosFiltrados.length;
+  const entregados = pedidosFiltrados.filter(p => p.estado_entrega === 'entregado').length;
   const porEntregar = totalDespachar - entregados;
 
-  return (
-    <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
-      
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 border-b border-neutral-800 pb-4">
+  // ── Components ──
+  const TopAccordion = ({ id, title, count, color, children }: any) => (
+    <div className={`border rounded-3xl overflow-hidden transition-all ${color}`}>
+      <button
+        onClick={() => setOpenTop(prev => ({ ...prev, [id]: !prev[id] }))}
+        className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+      >
         <div className="flex items-center gap-3">
-          <div className="p-3 bg-blue-500/20 text-blue-500 rounded-2xl"><Truck size={28} /></div>
-          <div><h2 className="text-2xl font-bold">Despacho y Entregas</h2><p className="text-neutral-400 text-sm">Auditoría diaria y despachos</p></div>
+          <span className="font-black text-base">{title}</span>
+          <span className="px-2 py-0.5 rounded-full text-xs font-black bg-white/20">{count}</span>
         </div>
-        <div className="flex flex-col md:flex-row items-center gap-4 bg-neutral-900 border border-neutral-800 p-2 rounded-2xl">
-          <div className="relative w-full md:w-48">
-            <Search size={18} className="absolute left-3 top-3 text-neutral-500" />
-            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Buscar Cliente..." className="w-full bg-neutral-950 text-white rounded-xl py-2 pl-10 pr-4 outline-none border border-neutral-800 focus:border-neutral-600" />
+        <ChevronDown size={20} className={`transition-transform text-white/60 ${openTop[id] ? 'rotate-180' : ''}`} />
+      </button>
+      {openTop[id] && <div className="px-3 pb-3 space-y-2">{children}</div>}
+    </div>
+  );
+
+  const SubAccordion = ({ id, title, count, children, extraAction }: any) => (
+    <div className="bg-neutral-950/50 border border-neutral-800 rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setOpenSub(prev => ({ ...prev, [id]: !prev[id] }))}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-neutral-800/30 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-sm text-neutral-300">{title}</span>
+          {count > 0 && <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-neutral-700 text-neutral-300">{count}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          {extraAction}
+          <ChevronDown size={16} className={`transition-transform text-neutral-500 ${openSub[id] ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+      {openSub[id] && <div className="border-t border-neutral-800/50">{children}</div>}
+    </div>
+  );
+
+  function OrderRows({ orders }: { orders: Pedido[] }) {
+    if (orders.length === 0) return <div className="p-6 text-center text-neutral-600 text-sm">Vacío</div>;
+    return (
+      <div className="divide-y divide-neutral-800/50">
+        {orders.map((p: any) => (
+          <div key={p.id} className="px-4 py-3 flex items-center gap-3 hover:bg-neutral-800/30 transition-colors">
+            {/* Name + detail */}
+            <div className="flex-1 min-w-0">
+              {editingId === p.id ? (
+                <input type="text" value={editName} onChange={e => setEditName(e.target.value)} onBlur={() => guardarEdicion(p.id)} onKeyDown={e => e.key === 'Enter' && guardarEdicion(p.id)} autoFocus className="bg-neutral-700 text-white rounded px-2 w-full text-sm" />
+              ) : (
+                <div className="flex items-center gap-1 font-bold text-sm text-white">
+                  {p.beneficiario}
+                  {isToday && <button onClick={() => { setEditingId(p.id); setEditName(p.beneficiario); }} className="text-neutral-600 hover:text-amber-400"><Edit2 size={11} /></button>}
+                </div>
+              )}
+              {/* Items checklist */}
+              {(p.detalle as any)?.items ? (
+                <div className="mt-1 space-y-0.5">
+                  {(p.detalle as any).items.map((it: any, itIdx: number) => (
+                    <div key={itIdx} onClick={() => toggleItemCompletado(p, itIdx)} className={`flex items-center gap-1.5 text-[11px] cursor-pointer select-none ${it.completado ? 'line-through text-neutral-600' : 'text-neutral-400'}`}>
+                      <div className={`w-2.5 h-2.5 rounded-sm border flex-shrink-0 ${it.completado ? 'bg-emerald-500 border-emerald-500' : 'border-neutral-600'}`} />
+                      <span>
+                        {(it.cantidad || 1) > 1 && `${it.cantidad}x `}
+                        {it.proteina === 'Solo Sopa' ? (it.sopa || 'Sopa') : it.proteina}
+                        {it.sopa && it.proteina !== 'Solo Sopa' && <span className="text-amber-500/80 font-medium whitespace-nowrap"> + {it.sopa}</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[10px] text-neutral-500 mt-0.5">{detalleText(p)}</p>
+              )}
+            </div>
+
+            {/* Responsable (compact) */}
+            <select className="bg-neutral-800 text-[10px] font-bold p-1 rounded outline-none max-w-[90px] hidden md:block" value={p.responsable_id || 'null'} onChange={e => asignarResponsable(p.id, e.target.value)}>
+              <option value="null">EFECTIVO</option>
+              {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+
+            {/* Price */}
+            <div className="text-sm font-black text-white shrink-0 cursor-pointer" onClick={() => { setEditingPrecioId(p.id); setNuevoPrecio(p.valor); }}>
+              {editingPrecioId === p.id ? <input type="number" className="w-16 bg-neutral-800 text-xs rounded px-1" value={nuevoPrecio} onChange={e => setNuevoPrecio(e.target.value)} onBlur={() => guardarNuevoPrecio(p.id)} autoFocus /> : `$${p.valor?.toLocaleString()}`}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1 shrink-0">
+              {isToday && (
+                <button onClick={() => agregarSnackRapido(p, 'Boli')} className="w-6 h-6 rounded-full bg-cyan-600/20 text-cyan-400 flex items-center justify-center hover:bg-cyan-600 hover:text-white transition-colors" title="+ Boli">
+                  <Plus size={13} />
+                </button>
+              )}
+              {isToday && (
+                <button onClick={() => marcarEntregado(p.id!, p.estado_entrega!)} className={`text-[9px] font-black uppercase px-2 py-1 rounded transition-colors ${p.estado_entrega === 'entregado' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-neutral-700 text-neutral-400 hover:bg-emerald-600 hover:text-white'}`}>
+                  {p.estado_entrega === 'entregado' ? '✓' : 'Entr.'}
+                </button>
+              )}
+              {isToday && (
+                <button onClick={() => togglePagado(p)} className={`text-[9px] font-black uppercase px-2 py-1 rounded ${p.pagado ? 'bg-blue-500/20 text-blue-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                  {p.pagado ? 'Pagado' : 'Cobrar'}
+                </button>
+              )}
+              {isToday && (
+                <button onClick={() => eliminarPedido(p.id)} className="text-neutral-700 hover:text-red-500 transition-colors">
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2 px-2">
-            <Calendar size={20} className="text-neutral-500" />
-            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="bg-transparent text-white outline-none border-none py-2" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-4">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between md:items-center gap-3 border-b border-neutral-800 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-blue-500/20 text-blue-500 rounded-2xl"><Truck size={26} /></div>
+          <div><h2 className="text-2xl font-bold">Despacho</h2><p className="text-neutral-400 text-sm">Control de entregas</p></div>
+        </div>
+        <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 p-2 rounded-2xl">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-2.5 text-neutral-500" />
+            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Buscar..." className="bg-neutral-950 text-white rounded-xl py-2 pl-9 pr-3 outline-none border border-neutral-800 text-sm w-40 md:w-auto" />
+          </div>
+          <div className="flex items-center gap-1.5 px-2">
+            <Calendar size={16} className="text-neutral-500" />
+            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} className="bg-transparent text-white outline-none border-none py-1 text-sm" />
           </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex-1 flex justify-center items-center"><div className="w-8 h-8 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin"></div></div>
-      ) : (
-        <div className="flex flex-col gap-6 w-full max-w-5xl mx-auto pb-20 md:pb-0">
-
-          {/* Dashboard */}
-          {isToday && (
-            <div className="grid grid-cols-3 gap-3 w-full">
-              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center"><Flame size={18} className="text-blue-500 mb-1" /><span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Total a Despachar</span><span className="text-2xl font-black text-white">{totalDespachar}</span></div>
-              <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center"><CheckSquare size={18} className="text-emerald-500 mb-1" /><span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Entregados</span><span className="text-2xl font-black text-emerald-400">{entregados}</span></div>
-              <div className="bg-neutral-900 border border-red-900/50 rounded-2xl p-3 shadow-xl flex flex-col items-center justify-center text-center"><Truck size={18} className="text-orange-500 mb-1" /><span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Por Entregar</span><span className="text-2xl font-black text-orange-400">{porEntregar}</span></div>
-            </div>
-          )}
-
-          {/* Listos para Entregar */}
-          {isToday && (
-            <div className="mb-6">
-              <div className="flex justify-between items-center mb-4 ml-2">
-                <h3 className="text-lg uppercase tracking-wider font-bold text-neutral-400">⏳ Listos Para Entregar ({listosParaEntregar.length})</h3>
-                <button onClick={() => setShowExtraModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg transition-transform hover:scale-105"><Plus size={16} /> Añadir Porción Extra</button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {listosParaEntregar.map(p => (
-                  <div key={p.id} className="bg-emerald-950/20 border border-emerald-900/50 rounded-2xl p-4 flex justify-between items-center hover:from-emerald-900/20 transition-all shadow-xl shadow-emerald-900/5">
-                    <div className="flex-1">
-                      <h4 className="font-bold text-xl text-emerald-400 mb-1">{p.beneficiario}</h4>
-                      <p className="text-sm text-neutral-400 line-clamp-2">{detalleText(p)}</p>
-                      {!(p.detalle as any)?.items && p.detalle.sopa && (<div className="mt-1 flex items-center gap-1 text-orange-400 font-black text-xs uppercase"><span className="text-lg">🍲</span> {p.detalle.sopa}</div>)}
-                      {!(p.detalle as any)?.items && p.detalle.nota && (<div className="mt-1 text-yellow-400 text-xs font-medium italic">⚠️ Nota: {p.detalle.nota}</div>)}
-                      <div className="mt-2 flex gap-2">
-                        <span className={`text-xs px-2 py-1 rounded-md font-bold shrink-0 ${p.pagado ? 'bg-blue-500/20 text-blue-400' : 'bg-orange-500/20 text-orange-400'}`}>{p.pagado ? 'Pagado' : 'Deuda'}</span>
-                        {(p as any).clientes?.nombre && (<span className="text-xs px-2 py-1 rounded-md bg-neutral-800 text-neutral-300 truncate max-w-[140px]">Resp: {(p as any).clientes?.nombre}</span>)}
-                      </div>
-                    </div>
-                    <button onClick={() => marcarEntregado(p.id!, p.estado_entrega!)} className="ml-4 w-16 h-16 md:w-auto md:h-auto md:px-6 md:py-3 rounded-2xl bg-emerald-600 text-white font-bold flex justify-center items-center gap-2 hover:bg-emerald-500 active:scale-95 transition-all shadow-lg shadow-emerald-600/30">
-                      <CheckSquare size={24} /> <span className="hidden md:block">Entregar</span>
-                    </button>
-                  </div>
-                ))}
-                {listosParaEntregar.length === 0 && (<div className="col-span-full border-2 border-dashed border-neutral-800 rounded-2xl p-8 text-center text-neutral-500">No hay pedidos empacados pendientes de entrega.</div>)}
-              </div>
-            </div>
-          )}
-
-          {/* Historial Restaurante */}
-          <div>
-            <h3 className="text-lg uppercase tracking-wider font-bold text-neutral-400 mb-4 ml-2">📜 Historial de Restaurante ({pedidosRestaurante.length})</h3>
-            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-neutral-800">
-                  <thead className="bg-neutral-800">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Beneficiario</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Detalle</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Responsable</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Cocina</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Valor / Pago</th>
-                      {isToday && (<th className="px-6 py-3 text-right text-xs font-medium text-neutral-400 uppercase tracking-wider">Entrega</th>)}
-                      <th className="px-6 py-3 text-right text-xs font-medium text-neutral-400 uppercase tracking-wider">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-800">
-                    {pedidosRestaurante.map(p => {
-                      const ptg = p.pagado ? 'text-blue-400' : 'text-orange-400';
-                      const cocinaColor = p.estado_cocina === 'empacado' ? 'text-emerald-400' : 'text-yellow-400';
-                      return (
-                        <tr key={p.id} className="hover:bg-neutral-800 transition-colors">
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {editingId === p.id ? (
-                              <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={() => guardarEdicion(p.id!)} onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(p.id!); if (e.key === 'Escape') setEditingId(null); }} className="bg-neutral-700 text-white rounded-md px-2 py-1 w-full" autoFocus />
-                            ) : (
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-white">{p.beneficiario}</span>
-                                {isToday && (<button onClick={() => { setEditingId(p.id!); setEditName(p.beneficiario || ''); }} className="text-neutral-500 hover:text-blue-400"><Edit2 size={16} /></button>)}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm font-medium text-neutral-200">
-                              {(p.detalle as any)?.items ? (
-                                <span><span className="text-xs text-orange-400 font-bold">{(p.detalle as any).items.length} ítems: </span>{(p.detalle as any).items.map((it: any) => it.proteina).join(', ')}</span>
-                              ) : (
-                                <span>{p.detalle.proteina}{p.detalle.acompanamientos?.length ? ' + ' + p.detalle.acompanamientos.join(', ') : ''}</span>
-                              )}
-                            </div>
-                            {!(p.detalle as any)?.items && p.detalle.sopa && (<div className="text-[10px] font-black text-orange-500 uppercase flex items-center gap-1 mt-0.5">🍲 {p.detalle.sopa}</div>)}
-                            {!(p.detalle as any)?.items && p.detalle.nota && (<div className="text-[11px] text-yellow-400 italic mt-1 max-w-[200px] truncate" title={p.detalle.nota}>⚠️ Nota: {p.detalle.nota}</div>)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-neutral-400">
-                            <select className="bg-neutral-800 border border-neutral-700 rounded p-1 text-xs outline-none text-neutral-300 focus:border-blue-500 max-w-[120px]" value={p.responsable_id || 'null'} onChange={(e) => asignarResponsable(p.id!, e.target.value)}>
-                              <option value="null">Sin Cuenta (Efectivo)</option>
-                              {clientes.map(c => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
-                            </select>
-                          </td>
-                          <td className={`px-6 py-4 whitespace-nowrap font-bold ${cocinaColor}`}>{p.estado_cocina === 'empacado' ? 'Empacado' : 'En Proceso'}</td>
-                          <td className={`px-6 py-4 font-bold ${ptg}`}>
-                            {editingPrecioId === p.id ? (
-                              <input type="number" className="w-20 bg-neutral-800 text-white rounded px-1 text-sm font-bold border border-blue-500" value={nuevoPrecio} onChange={e => setNuevoPrecio(e.target.value)} autoFocus onBlur={() => guardarNuevoPrecio(p.id!)} onKeyDown={e => e.key === 'Enter' && guardarNuevoPrecio(p.id!)} />
-                            ) : (
-                              <div className="cursor-pointer hover:text-blue-400 inline-block" onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}>${p.valor.toLocaleString()}</div>
-                            )}
-                            <div className="mt-1">
-                              {isToday && (<button onClick={() => togglePagado(p)} className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold transition-colors ${p.pagado ? 'bg-blue-500/20 text-blue-400 hover:bg-neutral-800' : 'bg-orange-500/20 text-orange-400 hover:bg-orange-500 hover:text-white'}`}>{p.pagado ? 'Pagado (Deshacer)' : 'Cobrar Ahora'}</button>)}
-                              {!isToday && !p.pagado && <span className="text-orange-500 text-xs">(Deuda)</span>}
-                            </div>
-                          </td>
-                          {isToday && (
-                            <td className="px-6 py-4 text-right">
-                              <button onClick={() => p.estado_entrega === 'entregado' ? marcarEntregado(p.id!, 'entregado') : marcarEntregado(p.id!, 'en_espera')} className={`px-3 py-1 rounded-xl text-xs font-bold transition-all active:scale-95 ${p.estado_entrega === 'entregado' ? 'bg-neutral-800 text-neutral-400 hover:text-white' : 'bg-blue-500 text-white hover:bg-blue-600'}`}>{p.estado_entrega === 'entregado' ? 'Deshacer' : 'Entregado'}</button>
-                            </td>
-                          )}
-                          <td className="px-6 py-4 text-right whitespace-nowrap">
-                            {isToday && (<button onClick={() => eliminarPedido(p.id!)} className="text-neutral-500 hover:text-red-500 transition-colors"><Trash2 size={20} /></button>)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {pedidosRestaurante.length === 0 && (<tr><td colSpan={7} className="px-6 py-12 text-center text-neutral-500">No hay registros en esta fecha.</td></tr>)}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
-          {/* Historial Snacks */}
-          {pedidosSnacks.length > 0 && (
-            <div className="mt-8">
-              <h3 className="text-lg uppercase tracking-wider font-bold text-cyan-400 mb-4 ml-2 flex items-center gap-2">🍦 Historial de Snacks y Extras ({pedidosSnacks.length})</h3>
-              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-neutral-800">
-                    <thead className="bg-neutral-800">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Beneficiario</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Snack / Extra</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Responsable</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-400 uppercase tracking-wider">Valor / Pago</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-neutral-400 uppercase tracking-wider">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-800">
-                      {pedidosSnacks.map(p => {
-                        const ptg = p.pagado ? 'text-blue-400' : 'text-orange-400';
-                        return (
-                          <tr key={p.id} className="hover:bg-neutral-800 transition-colors">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              {editingId === p.id ? (
-                                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={() => guardarEdicion(p.id!)} onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(p.id!); if (e.key === 'Escape') setEditingId(null); }} className="bg-neutral-700 text-white rounded-md px-2 py-1 w-full" autoFocus />
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium text-white">{p.beneficiario || 'Cliente Directo'}</span>
-                                  {isToday && (<button onClick={() => { setEditingId(p.id!); setEditName(p.beneficiario || ''); }} className="text-neutral-500 hover:text-blue-400"><Edit2 size={16} /></button>)}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm font-bold text-cyan-400">{p.detalle.proteina}</div>
-                              {p.detalle.nota && (<div className="text-[11px] text-yellow-400 italic mt-1 max-w-[200px] truncate" title={p.detalle.nota}>⚠️ {p.detalle.nota}</div>)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <select className="bg-neutral-800 border border-neutral-700 rounded p-1 text-xs outline-none text-neutral-300 focus:border-blue-500 max-w-[120px]" value={p.responsable_id || 'null'} onChange={(e) => asignarResponsable(p.id!, e.target.value)}>
-                                <option value="null">Sin Cuenta (Efectivo)</option>
-                                {clientes.map(c => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
-                              </select>
-                            </td>
-                            <td className={`px-6 py-4 font-bold ${ptg}`}>
-                              {editingPrecioId === p.id ? (
-                                <input type="number" className="w-20 bg-neutral-800 text-white rounded px-1 text-sm font-bold border border-blue-500" value={nuevoPrecio} onChange={e => setNuevoPrecio(e.target.value)} autoFocus onBlur={() => guardarNuevoPrecio(p.id!)} onKeyDown={e => e.key === 'Enter' && guardarNuevoPrecio(p.id!)} />
-                              ) : (
-                                <div className="cursor-pointer hover:text-blue-400 inline-block" onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}>${p.valor.toLocaleString()}</div>
-                              )}
-                              <div className="mt-1">
-                                {isToday && (<button onClick={() => togglePagado(p)} className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold transition-colors ${p.pagado ? 'bg-blue-500/20 text-blue-400 hover:bg-neutral-800' : 'bg-orange-500/20 text-orange-400 hover:bg-orange-500 hover:text-white'}`}>{p.pagado ? 'Pagado (Deshacer)' : 'Cobrar Ahora'}</button>)}
-                                {!isToday && !p.pagado && <span className="text-orange-500 text-xs">(Deuda)</span>}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-right whitespace-nowrap">
-                              {isToday && (<button onClick={() => eliminarPedido(p.id!)} className="text-neutral-500 hover:text-red-500 transition-colors"><Trash2 size={20} /></button>)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
+      {/* Stats bar */}
+      {isToday && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 text-center"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Total</span><div className="text-2xl font-black">{totalDespachar}</div></div>
+          <div className="bg-neutral-900 border border-emerald-900/50 rounded-2xl p-3 text-center text-emerald-400"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Entregados</span><div className="text-2xl font-black">{entregados}</div></div>
+          <div className="bg-neutral-900 border border-orange-900/50 rounded-2xl p-3 text-center text-orange-400"><span className="text-[10px] uppercase font-bold text-neutral-500 block">Pendientes</span><div className="text-2xl font-black">{porEntregar}</div></div>
         </div>
       )}
 
-      {/* Modal Añadir Porción Extra */}
+      {loading ? (
+        <div className="flex-1 flex justify-center items-center"><div className="w-8 h-8 rounded-full border-4 border-emerald-500 border-t-transparent animate-spin" /></div>
+      ) : (
+        <div className="flex flex-col gap-3 w-full max-w-4xl mx-auto pb-20 md:pb-0">
+
+          {/* ── TOP ACCORDION 1: Por Pagar ── */}
+          <TopAccordion id="porPagar" title="💳 Por Pagar" count={porPagarList.length} color="bg-orange-900/20 border-orange-900/40 text-orange-300">
+            {/* Sub: Listos para entregar */}
+            <SubAccordion id="listos" title="⏳ Listos para Entregar" count={listosParaEntregar.length}>
+              {listosParaEntregar.length === 0 ? (
+                <div className="p-4 text-center text-neutral-600 text-sm">Nada listo aún</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 p-2">
+                  {listosParaEntregar.map(p => (
+                    <div key={p.id} className="bg-emerald-950/20 border border-emerald-900/40 rounded-xl p-3 flex justify-between items-center">
+                      <div className="flex-1">
+                        <h4 className="font-bold text-emerald-400 text-sm">{p.beneficiario}</h4>
+                        <p className="text-xs text-neutral-500 mt-0.5">{detalleText(p)}</p>
+                      </div>
+                      <button onClick={() => marcarEntregado(p.id!, p.estado_entrega!)} className="ml-3 w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-500">
+                        <Truck size={18} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SubAccordion>
+
+            {/* Sub: Arroces */}
+            <SubAccordion id="arroces" title="🍚 Solo Arroces" count={sArroces.length}>
+              <OrderRows orders={sArroces} />
+            </SubAccordion>
+
+            {/* Sub: Snacks */}
+            <SubAccordion id="snacks" title="🍦 Solo Bolis / Snacks" count={sSnacks.length}>
+              <OrderRows orders={sSnacks} />
+            </SubAccordion>
+
+            {/* Sub: Sopas */}
+            <SubAccordion id="sopas" title="🍲 Solo Sopas" count={sSopas.length}>
+              <OrderRows orders={sSopas} />
+            </SubAccordion>
+
+            {/* Sub: Restaurante */}
+            <SubAccordion
+              id="restaurante"
+              title="🍽️ Restaurante / Mixtos"
+              count={sRestaurante.length}
+              extraAction={isToday && (
+                <button onClick={e => { e.stopPropagation(); setShowExtraModal(true); }} className="bg-blue-600/80 text-white text-[9px] font-black uppercase px-2 py-1 rounded-lg flex items-center gap-1">
+                  <Plus size={11} /> Extra
+                </button>
+              )}
+            >
+              <OrderRows orders={sRestaurante} />
+            </SubAccordion>
+          </TopAccordion>
+
+          {/* ── TOP ACCORDION 2: Pagados ── */}
+          <TopAccordion id="pagados" title="✅ Pagados" count={pagadosList.length} color="bg-emerald-900/20 border-emerald-900/40 text-emerald-300">
+            <div className="bg-neutral-950/50 border border-neutral-800 rounded-2xl overflow-hidden">
+              <OrderRows orders={pagadosList} />
+            </div>
+          </TopAccordion>
+
+        </div>
+      )}
+
+      {/* Modal: Extra */}
       {showExtraModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md p-6 shadow-2xl relative">
-            <button onClick={() => setShowExtraModal(false)} className="absolute top-4 right-4 text-neutral-500 hover:text-white"><X size={24} /></button>
-            <h2 className="text-2xl font-black text-white mb-6">Añadir Porción Extra</h2>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-md p-6 relative">
+            <button onClick={() => setShowExtraModal(false)} className="absolute top-4 right-4 text-neutral-500"><X size={24} /></button>
+            <h2 className="text-2xl font-black mb-6">Añadir Extra</h2>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-neutral-400 mb-2 uppercase tracking-wide">Proteína <span className="text-red-500">*</span></label>
-                <select className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 outline-none border border-neutral-800 focus:border-blue-500" value={extraProteina} onChange={(e) => setExtraProteina(e.target.value)}>
-                  <option value="">Seleccione Proteína</option>
-                  {menuConfig.proteinas.map(p => (<option key={p} value={p}>{p}</option>))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-neutral-400 mb-2 uppercase tracking-wide">Sopa (Opcional)</label>
-                <select className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 outline-none border border-neutral-800 focus:border-blue-500" value={extraSopa} onChange={(e) => setExtraSopa(e.target.value)}>
-                  <option value="">Seleccione Sopa</option>
-                  <option value="Sin Sopa">Ninguna</option>
-                  {menuConfig.sopas.map(s => (<option key={s} value={s}>{s}</option>))}
-                </select>
-              </div>
-              <div className="pt-4 border-t border-neutral-800 mt-6">
-                <button onClick={crearPorcionExtra} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-lg py-4 rounded-xl flex justify-center items-center gap-2 transition-transform hover:scale-105"><Plus size={20} /> Crear Extra en Stock</button>
-              </div>
+              <select className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 border border-neutral-800" value={extraProteina} onChange={e => setExtraProteina(e.target.value)}><option value="">Proteína</option>{menuConfig.proteinas.map(p => <option key={p} value={p}>{p}</option>)}</select>
+              <select className="w-full bg-neutral-950 text-white rounded-xl px-4 py-3 border border-neutral-800" value={extraSopa} onChange={e => setExtraSopa(e.target.value)}><option value="">Sopa</option><option value="Sin Sopa">Ninguna</option>{menuConfig.sopas.map(s => <option key={s} value={s}>{s}</option>)}</select>
+              <button onClick={crearPorcionExtra} className="w-full bg-blue-600 text-white font-black py-4 rounded-xl mt-4">Crear Stock</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal Eliminar Pedido */}
+      {/* Modal: Confirmar eliminar */}
       {pedidoToDelete && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl relative text-center animate-fade-in">
-            <div className="mx-auto w-16 h-16 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mb-4">
-              <Trash2 size={32} />
-            </div>
-            <h2 className="text-xl font-black text-white mb-2">Eliminar Pedido</h2>
-            <p className="text-neutral-400 text-sm mb-6">
-              ¿Estás seguro de que deseas eliminar este pedido permanentemente? Esta acción no se puede deshacer.
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <button 
-                onClick={() => setPedidoToDelete(null)}
-                className="py-3 rounded-xl font-bold text-neutral-400 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-colors"
-                disabled={loading}
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmarEliminarPedido}
-                className="py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500 transition-colors shadow-lg shadow-red-600/30"
-                disabled={loading}
-              >
-                {loading ? 'Eliminando...' : 'Eliminar'}
-              </button>
+        <div className="fixed inset-0 bg-black/80 z-50 flex justify-center items-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 text-center max-w-sm">
+            <Trash2 size={48} className="mx-auto text-red-500 mb-4" />
+            <h2 className="text-xl font-bold mb-6">¿Eliminar pedido?</h2>
+            <div className="flex gap-3">
+              <button onClick={() => setPedidoToDelete(null)} className="flex-1 py-3 bg-neutral-800 rounded-xl">No</button>
+              <button onClick={confirmarEliminarPedido} className="flex-1 py-3 bg-red-600 rounded-xl">Sí, eliminar</button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
+
+

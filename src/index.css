@@ -68,6 +68,48 @@ html.light .bg-neutral-800 {
   color: #0f172a !important;
 }
 
-/* Sidebar nav */
-html.light nav.fixed,
-html.light nav.bg-neutral-950     { background-color: #ffffff !important; border-color: #e2e8f0 !important; }
+/* ── TABLAS MÓVILES ────────────────────────────────────────────── */
+.table-responsive {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  .mobile-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── ESTILOS PREMIUM ───────────────────────────────────────────── */
+.glass {
+  background: rgba(23, 23, 27, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.premium-shadow {
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.tap-highlight {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}

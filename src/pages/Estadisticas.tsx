@@ -4,12 +4,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis
 import { TrendingUp, ShoppingCart, Activity, DollarSign, Info, CalendarDays, IceCream2, Wheat } from 'lucide-react';
 import { type Pedido, MENU_CONFIG_ID } from '../store/orderStore';
 
-// Helpers para clasificar pedidos usando tipoPlato (nuevo) o heurístico (retrocompat.)
-const esSnack = (p: Pedido) =>
-  p.detalle?.tipoPlato === 'snack' ||
-  (p.estado_cocina === 'empacado' && !p.detalle?.sopa && (p.detalle?.acompanamientos?.length ?? 0) === 0 && (p.detalle?.extras?.length ?? 0) === 0 && p.detalle?.tipoPlato !== 'arroz');
-
-const esArrozEspecial = (p: Pedido) => p.detalle?.tipoPlato === 'arroz';
+// Helpers para clasificar pedidos
 
 export default function Estadisticas() {
   const [loading, setLoading] = useState(true);
@@ -50,37 +45,65 @@ export default function Estadisticas() {
     const diasLetras = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
     pedidos.forEach(p => {
-       const prot = p.detalle?.proteina;
-       
-       // Clasificar el pedido
-       if (prot) {
-         if (esArrozEspecial(p)) {
-           // Normalizar: quitar "2x " etc y quitar sufijo " pequeña" / " grande"
-           const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '');
-           conteoArroz[nombreBase] = (conteoArroz[nombreBase] || 0) + 1;
-         } else if (esSnack(p)) {
-           const nombreBase = prot.replace(/^\d+x\s+/i, '');
-           conteoSnacks[nombreBase] = (conteoSnacks[nombreBase] || 0) + 1;
-         } else {
-           conteoProteinas[prot] = (conteoProteinas[prot] || 0) + 1;
-         }
-       }
+      const items = (p.detalle as any)?.items || [p.detalle];
+      
+      items.forEach((it: any) => {
+        if (!it || !it.proteina) return;
+        
+        const prot = it.proteina;
+        const cant = it.cantidad || 1;
+        const tipo = it.tipoPlato || (esSnackDirecto(it) ? 'snack' : 'restaurante');
 
-       const sopa = p.detalle?.sopa;
-       if (sopa) {
-          conteoSopas[sopa] = (conteoSopas[sopa] || 0) + 1;
-       }
-       if (p.created_at) {
-          const d = new Date(p.created_at);
-          const diaNombre = diasLetras[d.getDay()];
-          conteoDiasSemana[diaNombre] += 1;
-       }
+        if (tipo === 'arroz') {
+          const nombreBase = prot.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '');
+          conteoArroz[nombreBase] = (conteoArroz[nombreBase] || 0) + cant;
+        } else if (tipo === 'snack') {
+          // Agrupar Bolis y Helados
+          let nombreBase = prot.replace(/^\d+x\s+/i, '');
+          if (nombreBase.toLowerCase().includes('boli') || nombreBase.toLowerCase().includes('helado')) {
+             nombreBase = "Bolis y Helados";
+          }
+          conteoSnacks[nombreBase] = (conteoSnacks[nombreBase] || 0) + cant;
+        } else {
+          // Excluir explícitamente: "Corriente", "Solo Sopa" y nombres que parezcan arroz
+          const nombreLower = prot.toLowerCase();
+          const esExcluido = prot === 'Corriente' || prot === 'Solo Sopa' || prot === 'Solo sopa' ||
+            nombreLower.includes('arroz') || nombreLower.includes('sopa guisada') ||
+            tipo === 'arroz'; // Seguridad extra
+          if (!esExcluido) {
+            conteoProteinas[prot] = (conteoProteinas[prot] || 0) + cant;
+          }
+        }
+
+        const sopa = it.sopa;
+        if (sopa && sopa !== 'Sin Sopa' && sopa !== 'No') {
+          conteoSopas[sopa] = (conteoSopas[sopa] || 0) + cant;
+        }
+      });
+
+      if (p.created_at) {
+        // Usar hora local de Colombia (UTC-5) para asignar el día correcto
+        const d = new Date(new Date(p.created_at).getTime() - 5 * 60 * 60 * 1000);
+        const diaNombre = diasLetras[d.getUTCDay()];
+        const totalItemsDia = items.reduce((acc: number, curr: any) => acc + (curr?.cantidad || 1), 0);
+        conteoDiasSemana[diaNombre] = (conteoDiasSemana[diaNombre] || 0) + totalItemsDia;
+      }
     });
+
+    // Helper para detectar snacks en pedidos VIEJOS sin tipoPlato
+    // Solo clasificar como snack si el nombre contiene palabras clave de snack
+    function esSnackDirecto(it: any) {
+      if (it.tipoPlato === 'snack') return true;
+      if (it.tipoPlato && it.tipoPlato !== 'snack') return false; // tipoPlato definido y no es snack → no es snack
+      // Sin tipoPlato: usar nombre como heurística (solo si parece snack)
+      const nombre = (it.proteina || '').toLowerCase();
+      return nombre.includes('boli') || nombre.includes('helado') || nombre.includes('paleta') || nombre.includes('gaseosa') || nombre.includes('jugo');
+    }
     
     const arrProteinas = Object.entries(conteoProteinas)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
+      .slice(0, 5); // Top 5
     setVentasTop(arrProteinas);
 
     const arrSnacks = Object.entries(conteoSnacks)
@@ -101,7 +124,7 @@ export default function Estadisticas() {
 
     const arrFlujo = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].map(dia => ({
       dia,
-      pedidos: conteoDiasSemana[dia]
+      items: conteoDiasSemana[dia]
     }));
     setFlujoPorDia(arrFlujo);
 
@@ -137,14 +160,23 @@ export default function Estadisticas() {
 
     const conteoProteinas7Dias: Record<string, number> = {};
     pedidosUltimos7Dias.forEach(p => {
-       // Solo proteínas reales en la proyección de inventario
-       if (!esSnack(p) && !esArrozEspecial(p)) {
-         const prot = p.detalle?.proteina;
-         if (prot) {
-            conteoProteinas7Dias[prot] = (conteoProteinas7Dias[prot] || 0) + 1;
+       const items = (p.detalle as any)?.items || [p.detalle];
+       items.forEach((it: any) => {
+         if (!it || !it.proteina) return;
+         // No proyectar snacks ni arroces especiales aquí (usualmente son stock diferente)
+         const tipo = it.tipoPlato || (esSnackDirectoSimple(it) ? 'snack' : 'restaurante');
+         if (tipo === 'restaurante' && it.proteina !== 'Corriente') {
+            const cant = it.cantidad || 1;
+            conteoProteinas7Dias[it.proteina] = (conteoProteinas7Dias[it.proteina] || 0) + cant;
          }
-       }
+       });
     });
+
+    function esSnackDirectoSimple(it: any) {
+      if (it.tipoPlato === 'snack') return true;
+      if (it.tipoPlato === 'arroz') return true;
+      return !it.sopa && (!it.acompanamientos || it.acompanamientos.length === 0) && it.proteina !== 'Res' && it.proteina !== 'Pechuga' && it.proteina !== 'Cerdo';
+    }
 
     const proyeccion = Object.entries(conteoProteinas7Dias)
       .map(([name, sum]) => {
@@ -331,8 +363,8 @@ export default function Estadisticas() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
                     <XAxis dataKey="dia" stroke="#525252" fontSize={12} tickMargin={10} />
                     <YAxis stroke="#525252" fontSize={12} />
-                    <Tooltip cursor={{fill: '#262626'}} contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '12px' }} itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }} formatter={(value: any) => `${value} pedidos`} />
-                    <Bar dataKey="pedidos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Tooltip cursor={{fill: '#262626'}} contentStyle={{ backgroundColor: '#171717', border: '1px solid #262626', borderRadius: '12px' }} itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }} formatter={(value: any) => `${value} platos`} />
+                    <Bar dataKey="items" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

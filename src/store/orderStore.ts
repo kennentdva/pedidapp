@@ -16,6 +16,8 @@ export type ItemPedido = {
   nota?: string;
   tipoPlato?: 'normal' | 'snack' | 'arroz';
   valor: number;
+  cantidad: number;
+  completado?: boolean;
 };
 
 export type PedidoDetalle = {
@@ -89,6 +91,7 @@ interface OrderState {
   
   editingPedidoId: string | null;
   setEditingPedidoId: (id: string | null) => void;
+  saldarDeudaCompleta: (clienteId: string, monto: number) => Promise<void>;
 }
 
 const initialState = {
@@ -239,7 +242,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
   addItemAlCarrito: () => set((state) => {
     if (!state.detalle.proteina) return state;
-    const item: ItemPedido = {
+    const newItem: ItemPedido = {
       proteina: state.detalle.proteina,
       acompanamientos: state.detalle.acompanamientos,
       sopa: state.detalle.sopa,
@@ -247,14 +250,62 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       nota: state.detalle.nota,
       tipoPlato: state.detalle.tipoPlato,
       valor: state.valorBase,
+      cantidad: 1,
+      completado: false,
     };
+
+    // Agrupación automática: buscar si ya existe un ítem idéntico
+    const existingIndex = state.carrito.findIndex(i => 
+      i.proteina === newItem.proteina &&
+      JSON.stringify(i.acompanamientos.sort()) === JSON.stringify(newItem.acompanamientos.sort()) &&
+      i.sopa === newItem.sopa &&
+      JSON.stringify(i.extras.sort()) === JSON.stringify(newItem.extras.sort()) &&
+      i.nota === newItem.nota &&
+      i.tipoPlato === newItem.tipoPlato
+    );
+
+    if (existingIndex !== -1) {
+      const newCarrito = [...state.carrito];
+      newCarrito[existingIndex] = {
+        ...newCarrito[existingIndex],
+        cantidad: newCarrito[existingIndex].cantidad + 1,
+        valor: newCarrito[existingIndex].valor + newItem.valor
+      };
+      return {
+        carrito: newCarrito,
+        detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
+        valorBase: 0,
+        precioManual: false,
+      };
+    }
+
     return {
-      carrito: [...state.carrito, item],
+      carrito: [...state.carrito, newItem],
       detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
       valorBase: 0,
       precioManual: false,
     };
   }),
+
+  // Función para liquidar toda la deuda de un cliente
+  saldarDeudaCompleta: async (clienteId: string, monto: number) => {
+    // 1. Registrar el pago
+    const { error: errPago } = await supabase.from('pagos').insert([{
+      cliente_id: clienteId,
+      monto: monto,
+      metodo: 'Efectivo'
+    }]);
+
+    if (errPago) throw errPago;
+
+    // 2. Marcar todos los pedidos como pagados
+    const { error: errPed } = await supabase.from('pedidos')
+      .update({ pagado: true })
+      .eq('responsable_id', clienteId)
+      .eq('pagado', false);
+
+    if (errPed) throw errPed;
+  },
 
   removeItemDelCarrito: (index: number) => set((state) => ({
     carrito: state.carrito.filter((_, i) => i !== index),

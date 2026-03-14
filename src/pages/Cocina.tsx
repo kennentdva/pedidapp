@@ -60,6 +60,20 @@ export default function Cocina() {
     await supabase.from('pedidos').update({ [prop]: valor }).eq('id', id);
     setEditingId(null);
   };
+  
+  const toggleItemCompletado = async (p: Pedido, index: number) => {
+    const items = [...((p.detalle as any).items || [])];
+    if (items[index]) {
+      items[index].completado = !items[index].completado;
+      const nuevoDetalle = { ...p.detalle, items };
+      
+      // Update local state for immediate feedback
+      setPedidos(prev => prev.map(item => item.id === p.id ? { ...item, detalle: nuevoDetalle as any } : item));
+      
+      // Sync with Supabase
+      await supabase.from('pedidos').update({ detalle: nuevoDetalle }).eq('id', p.id!);
+    }
+  };
 
   const editarEnVentas = async (p: Pedido) => {
     const { data: clienteData } = await supabase.from('clientes').select('*').eq('id', p.responsable_id || '').single();
@@ -91,25 +105,30 @@ export default function Cocina() {
   const resumenProteinas = pedidosPendientes.reduce((acc, p) => {
     getItems(p).forEach(item => {
       const prot = item?.proteina;
-      if (prot && prot !== 'Solo Sopa' && item?.tipoPlato !== 'arroz' && item?.tipoPlato !== 'snack') {
-        acc[prot] = (acc[prot] || 0) + 1;
+      const cant = item?.cantidad || 1;
+      const isCompletado = item?.completado === true;
+      if (prot && !isCompletado && prot !== 'Solo Sopa' && item?.tipoPlato !== 'arroz' && item?.tipoPlato !== 'snack') {
+        acc[prot] = (acc[prot] || 0) + cant;
       }
     });
     return acc;
   }, {} as Record<string, number>);
 
   const resumenSopas = pedidosPendientes.reduce((acc, p) => {
-    getItems(p).forEach(item => { const s = item?.sopa; if (s) acc[s] = (acc[s] || 0) + 1; });
+    getItems(p).forEach(item => {
+      const s = item?.sopa;
+      const cant = item?.cantidad || 1;
+      const isCompletado = item?.completado === true;
+      if (s && !isCompletado) acc[s] = (acc[s] || 0) + cant;
+    });
     return acc;
   }, {} as Record<string, number>);
 
   const resumenArroz = pedidosPendientes.reduce((acc, p) => {
     getItems(p).forEach(item => {
-      if (item?.tipoPlato === 'arroz') {
+      if (item?.tipoPlato === 'arroz' && item?.completado !== true) {
         const proteinaStr = item.proteina || '';
-        // Extraer cantidad (ej: "2x ")
-        const cantMatch = proteinaStr.match(/^(\d+)x\s+/i);
-        const cantidad = cantMatch ? parseInt(cantMatch[1]) : 1;
+        const cantidad = item.cantidad || 1;
         
         // Extraer tamaño (ej: " pequeña" o " grande")
         const sizeMatch = proteinaStr.match(/\s+(pequeña|grande)$/i);
@@ -129,15 +148,14 @@ export default function Cocina() {
     return acc;
   }, {} as Record<string, { total: number, pequeña: number, grande: number }>);
 
-  const totalSopas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.sopa) acc++; }); return acc; }, 0);
-  const totalProteinas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack') acc++; }); return acc; }, 0);
+  const totalSopas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.sopa) acc += (it.cantidad || 1); }); return acc; }, 0);
+  const totalProteinas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack') acc += (it.cantidad || 1); }); return acc; }, 0);
   
   // Total de arroces (sumando cantidades reales)
   const totalArroces = pedidos.reduce((acc, p) => { 
     getItems(p).forEach(it => { 
       if (it?.tipoPlato === 'arroz') {
-        const cantMatch = (it.proteina || '').match(/^(\d+)x\s+/i);
-        acc += cantMatch ? parseInt(cantMatch[1]) : 1;
+        acc += it.cantidad || 1;
       }
     }); 
     return acc; 
@@ -179,58 +197,55 @@ export default function Cocina() {
          </div>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full border-b border-neutral-800 pb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 w-full border-b border-neutral-800 pb-4">
         {/* Proteínas pendientes */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
-           <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-neutral-800 pb-1">Faltan por preparar</span>
-           <div className="flex flex-wrap gap-2 justify-center content-center pt-1">
+        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Proteínas por Salir</span>
+           <div className="grid grid-cols-2 gap-2 flex-1">
              {Object.entries(resumenProteinas).map(([prot, cant]) => (
-               <div key={prot} className="flex flex-col items-center bg-neutral-950 px-2 rounded min-w-[50px]">
+               <div key={prot} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{prot}</span>
                  <span className="text-lg font-black text-orange-400">{cant}</span>
-                 <span className="text-[10px] text-neutral-400 truncate max-w-[60px]">{prot}</span>
                </div>
              ))}
-             {Object.keys(resumenProteinas).length === 0 && <span className="text-xs text-neutral-500 mt-2">Todo limpio 🧹</span>}
+             {Object.keys(resumenProteinas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Todo listo 🏆</span>}
            </div>
         </div>
+
         {/* Sopas pendientes */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
-           <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-neutral-800 pb-1">Sopas Pendientes</span>
-           <div className="flex flex-wrap gap-2 justify-center content-center pt-1">
+        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Sopas Pendientes</span>
+           <div className="grid grid-cols-2 gap-2 flex-1">
              {Object.entries(resumenSopas).map(([sopa, cant]) => (
-               <div key={sopa} className="flex flex-col items-center bg-neutral-950 px-2 rounded min-w-[50px]">
+               <div key={sopa} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{sopa}</span>
                  <span className="text-lg font-black text-amber-500">{cant}</span>
-                 <span className="text-[10px] text-neutral-400 truncate max-w-[60px]">{sopa}</span>
                </div>
              ))}
-             {Object.keys(resumenSopas).length === 0 && <span className="text-xs text-neutral-500 mt-2">Sin sopas 🍲</span>}
+             {Object.keys(resumenSopas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Sin sopas pend. 🥣</span>}
            </div>
         </div>
+
         {/* Arroces pendientes */}
-        <div className="bg-yellow-950/20 border border-yellow-900/30 rounded-3xl p-3 shadow-xl flex flex-col justify-center overflow-y-auto max-h-[100px] md:max-h-none">
-           <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1 text-center w-full block border-b border-yellow-900/20 pb-1">🍚 Arroces Pendientes ({totalArrocesPendientes})</span>
-           <div className="flex flex-wrap gap-2 justify-center content-center pt-1">
+        <div className="bg-yellow-950/10 backdrop-blur-md border border-yellow-900/30 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
+           <span className="text-[10px] uppercase font-black text-yellow-500/50 mb-3 text-center w-full tracking-widest">Arroces Pendientes ({totalArrocesPendientes})</span>
+           <div className="flex flex-wrap gap-2 justify-center">
              {Object.entries(resumenArroz).map(([nombre, info]) => (
-               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl min-w-[80px] border border-neutral-800/50">
-                 <span className="text-xl font-black text-yellow-400 leading-none">{info.total}</span>
-                 <span className="text-[11px] text-neutral-400 truncate max-w-[90px] text-center mb-1 font-medium">{nombre}</span>
-                 <div className="flex gap-3 border-t border-neutral-800 pt-1.5 w-full justify-center">
-                    {info.pequeña > 0 && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[10px] text-amber-500/50 font-bold uppercase">P</span>
-                        <span className="text-sm font-black text-amber-500">{info.pequeña}</span>
-                      </div>
-                    )}
-                    {info.grande > 0 && (
-                      <div className="flex flex-col items-center">
-                        <span className="text-[10px] text-orange-500/50 font-bold uppercase">G</span>
-                        <span className="text-sm font-black text-orange-500">{info.grande}</span>
-                      </div>
-                    )}
+               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl border border-yellow-900/20">
+                 <span className="text-xs text-neutral-400 mb-1">{nombre}</span>
+                 <div className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black text-yellow-500">{info.pequeña}</span>
+                        <span className="text-[8px] uppercase text-neutral-600">P</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black text-orange-500">{info.grande}</span>
+                        <span className="text-[8px] uppercase text-neutral-600">G</span>
+                    </div>
                  </div>
                </div>
              ))}
-             {Object.keys(resumenArroz).length === 0 && <span className="text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
+             {Object.keys(resumenArroz).length === 0 && <span className="text-center text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
            </div>
         </div>
       </div>
@@ -313,17 +328,27 @@ export default function Cocina() {
                   {hasMultipleItems ? (
                     // Multi-item order: show each item in its own mini-card
                     <div className="space-y-2">
-                      {((p.detalle as any).items as any[]).map((item: any, idx: number) => (
-                        <div key={idx} className="bg-neutral-950 rounded-xl p-2 border border-neutral-800">
-                          <p className="flex justify-between text-sm">
-                            <span className="text-neutral-500">{item.tipoPlato === 'arroz' ? '🍚' : item.tipoPlato === 'snack' ? '🍦' : '🍗'}</span>
-                            <span className="font-bold text-white text-right">{item.proteina}</span>
-                          </p>
-                          {item.sopa && <p className="text-xs text-orange-400 text-right mt-0.5">🍲 {item.sopa}</p>}
-                          {item.acompanamientos?.length > 0 && <p className="text-xs text-neutral-500 text-right">{item.acompanamientos.join(', ')}</p>}
-                          {item.nota && <p className="text-xs text-yellow-400 italic mt-1">⚠️ {item.nota}</p>}
-                        </div>
-                      ))}
+                      {((p.detalle as any).items as any[]).map((item: any, idx: number) => {
+                        const isDone = item.completado;
+                        return (
+                          <div 
+                            key={idx} 
+                            onClick={() => toggleItemCompletado(p, idx)}
+                            className={`rounded-xl p-2 border cursor-pointer transition-all ${isDone ? 'bg-emerald-900/20 border-emerald-500/30 opacity-60' : 'bg-neutral-950 border-neutral-800 hover:border-neutral-600'}`}
+                          >
+                            <p className={`flex justify-between text-sm ${isDone ? 'line-through text-neutral-500' : ''}`}>
+                              <span className="text-neutral-500">{item.tipoPlato === 'arroz' ? '🍚' : item.tipoPlato === 'snack' ? '🍦' : '🍗'}</span>
+                              <span className="font-bold text-white text-right">
+                                {(item.cantidad || 1) > 1 && <span className="text-orange-400 mr-1">{item.cantidad}x</span>}
+                                {item.proteina}
+                              </span>
+                            </p>
+                            {item.sopa && <p className={`text-xs text-orange-400 text-right mt-0.5 ${isDone ? 'line-through opacity-50' : ''}`}>🍲 {item.sopa}</p>}
+                            {item.acompanamientos?.length > 0 && <p className={`text-xs text-neutral-500 text-right ${isDone ? 'line-through opacity-50' : ''}`}>{item.acompanamientos.join(', ')}</p>}
+                            {item.nota && <p className="text-xs text-yellow-400 italic mt-1">⚠️ {item.nota}</p>}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     // Single-item legacy display
