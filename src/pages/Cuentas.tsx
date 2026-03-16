@@ -548,7 +548,14 @@ export default function Cuentas() {
       const year = d.getFullYear();
       
       let detalleStr = p.detalle?.proteina || '';
-      if (p.detalle?.sopa) detalleStr += ` con sopa de ${p.detalle.sopa}`;
+      if (p.detalle?.sopa) {
+         const sName = p.detalle.sopa;
+         if (sName.toLowerCase().startsWith('sopa')) {
+            detalleStr += ` con ${sName}`;
+         } else {
+            detalleStr += ` con sopa de ${sName}`;
+         }
+      }
       
       let extraStr = '';
       if (p.detalle?.extras && p.detalle.extras.length > 0) {
@@ -679,7 +686,14 @@ export default function Cuentas() {
     const tablaConsumos = pedidosPendientes.map(p => {
        const d = new Date(p.created_at || '').toLocaleDateString();
        let detalleStr = p.detalle?.proteina || '';
-       if (p.detalle?.sopa) detalleStr += ` + Sopa ${p.detalle.sopa}`;
+       if (p.detalle?.sopa) {
+          const sName = p.detalle.sopa;
+          if (sName.toLowerCase().startsWith('sopa')) {
+             detalleStr += ` + ${sName}`;
+          } else {
+             detalleStr += ` + Sopa ${sName}`;
+          }
+       }
        if (p.detalle?.extras && p.detalle.extras.length > 0) detalleStr += ` + Extras: ${p.detalle.extras.join(', ')}`;
        return [
          d,
