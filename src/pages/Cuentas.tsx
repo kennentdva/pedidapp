@@ -5,6 +5,13 @@ import { type Cliente, type Pedido, MENU_CONFIG_ID, useOrderStore } from '../sto
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+// Fuzzy: strip accents + teacher titles so "Héctor" matches "Hector" and "Profesor Juan" matches "Juan"
+const norm = (s: string) =>
+  (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+   .replace(/\b(profesor|profesora|profe|prof|profr|se[nñ]o|se[nñ]ora|se[nñ]or|doctor|doctora|dra?|sr[a]?|docente|licenciado|lic|ingeniero|ing|monitora|monitor|moni)\b/gi, '')
+   .replace(/\s+/g, ' ').trim();
+const clienteMatches = (nombre: string, q: string) => norm(nombre).includes(norm(q));
+
 export default function Cuentas() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [search, setSearch] = useState('');
@@ -292,25 +299,13 @@ export default function Cuentas() {
     setSavingHistorico(false);
   };
 
-  const normalizeStr = (str: string) => {
-    return (str || '')
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // Quitar acentos
-      .replace(/\b(profesor|profe|docente|licenciado|lic|ingeniero|ing|doctora|doctor|dra|dr|señora|señor|sr|sra)\b/gi, "") // Quitar títulos comunes
-      .replace(/\s+/g, ' ') // Normalizar espacios
-      .trim();
-  };
-
   const analizarTextoMasivo = () => {
     if (!textoMasivo.trim()) return;
     
     const lineas = textoMasivo.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const parsedItems: any[] = [];
-
     lineas.forEach((linea, index) => {
        const lowerLinea = linea.toLowerCase();
-       const normL = normalizeStr(linea);
        let isPagado = false;
        
        // Detectar si está pagado
@@ -318,64 +313,142 @@ export default function Cuentas() {
           isPagado = true;
        }
 
-       // Intentar encontrar proteína (coincidencia parcial normalizada)
-       let proteinaEncontrada = menuConfig.proteinas.find(p => {
-         const normP = normalizeStr(p);
-         return normL.includes(normP) || normP.includes(normL);
-       }) || 'Corriente';
-       
-       // Intentar encontrar sopa
-       let sopaEncontrada = '';
-       if (!lowerLinea.includes('sin sopa')) {
-          // 1. Buscar coincidencia exacta en el menú configurado
-          sopaEncontrada = menuConfig.sopas.find(s => normL.includes(normalizeStr(s))) || '';
-          
-          // 2. Si no hay coincidencia en el menú, buscar palabras clave comunes de sopas
-          if (!sopaEncontrada) {
-             const keywordsSopa = ['mote', 'ajiaco', 'frijol', 'lenteja', 'verdura', 'hueso', 'carne salada', 'sancocho', 'mondongo'];
-             const sopaKey = keywordsSopa.find(k => normL.includes(normalizeStr(k)));
-             if (sopaKey) {
-                // Capitalizar primera letra para estética
-                sopaEncontrada = sopaKey.charAt(0).toUpperCase() + sopaKey.slice(1);
-             } else if (lowerLinea.includes('sopa')) {
-                sopaEncontrada = menuConfig.sopas[0] || 'Sopa del día';
-             }
-          }
+       // 1. Extraer Nota si existe
+       let notaEncontrada = '';
+       const notaMatch = linea.match(/(?:nota|observacion|obs):\s*(.*)$/i);
+       let lineaSinNota = linea;
+       if (notaMatch) {
+          notaEncontrada = notaMatch[1].trim();
+          lineaSinNota = linea.substring(0, notaMatch.index).trim();
        }
-       
-       // Limpiar el nombre del cliente
-       const palabras = linea.split(' ');
+
+       // 2. Extraer Nombre (primeras palabras que no sean comida/acciones/precios)
+       const palabras = lineaSinNota.split(' ');
        let posibleNombre = '';
-       for (const word of palabras) {
+       let restoLineaIdx = 0;
+       
+       for (let i = 0; i < palabras.length; i++) {
+          const word = palabras[i];
           const wLow = word.toLowerCase();
-          const wNorm = normalizeStr(word);
+          const wNorm = norm(word);
           
-          // Si la palabra normalizada coincide con comida o acciones, paramos
-          if (menuConfig.proteinas.some(p => normalizeStr(p).includes(wNorm)) || 
-              wLow === 'con' || wLow === 'sin' || wLow === 'sopa' || wLow === 'pago' || 
-              ['mote', 'ajiaco', 'frijoles', 'lentejas'].some(s => wNorm.includes(s))) {
+          // Si la palabra coincide con comida, acciones o es un numero seguido de 'k' (ej 10k), el nombre termina
+          if (menuConfig.proteinas.some(p => norm(p).includes(wNorm) && wNorm.length > 2) || 
+              wLow === 'con' || wLow === 'sin' || wLow === 'sopa' || wLow === 'pago' || wLow === 'cancelo' ||
+              /^\d+k$/.test(wLow) ||
+              ['mote', 'ajiaco', 'frijol', 'lenteja', 'verdura', 'sancocho', 'mondongo'].some(s => wNorm.includes(s))) {
+             restoLineaIdx = i;
              break;
           }
           posibleNombre += word + ' ';
+          restoLineaIdx = i + 1;
        }
        posibleNombre = posibleNombre.trim() || `Usuario ${index + 1}`;
+       const restoLinea = palabras.slice(restoLineaIdx).join(' ');
+       const normResto = norm(restoLinea);
 
-       // Buscar cliente existente (normalizado)
-       const normPosible = normalizeStr(posibleNombre);
+       // 3. Buscar precios numéricos (ej: 10k, 5k)
+       const kMatches = restoLinea.match(/(\d+)k/gi);
+       const preciosEncontrados: number[] = [];
+       if (kMatches) {
+          kMatches.forEach(m => {
+            const val = parseInt(m) * 1000;
+            if (!isNaN(val)) preciosEncontrados.push(val);
+          });
+       }
+
+       // 4. Intentar encontrar sopa
+       let sopaEncontrada = '';
+       if (!lowerLinea.includes('sin sopa')) {
+          sopaEncontrada = menuConfig.sopas.find(s => normResto.includes(norm(s))) || '';
+          if (!sopaEncontrada) {
+             const keywordsSopa = ['mote', 'ajiaco', 'frijol', 'lenteja', 'verdura', 'hueso', 'carne salada', 'sancocho', 'mondongo'];
+             const sopaKey = keywordsSopa.find(k => normResto.includes(norm(k)) || lowerLinea.includes(norm(k)));
+             if (sopaKey) {
+                sopaEncontrada = sopaKey === 'ajiaco' ? 'Sopa de Ajiaco' : sopaKey.charAt(0).toUpperCase() + sopaKey.slice(1);
+             } else if (lowerLinea.includes('sopa')) {
+                sopaEncontrada = 'Sopa de Pollo';
+             }
+          }
+       }
+
+       // 5. Intentar encontrar proteína o Arroz Especial
+       // Si hay múltiples precios, trataremos de crear múltiples ítems
+       const itemsDeEstaLinea: any[] = [];
+       
+       if (preciosEncontrados.length > 1) {
+          // Caso multi-precio: "10k y 5k"
+          preciosEncontrados.forEach(p => {
+             itemsDeEstaLinea.push({
+                proteina: 'Arroz Cubano', 
+                precio: p,
+                sopa: '' 
+             });
+          });
+       } else {
+          // Caso normal: un solo item
+          let prot = '';
+          let price = 0;
+
+          const arrozEsp = menuConfig.arrozEspeciales.find(a => normResto.includes(norm(a.nombre)));
+          if (arrozEsp) {
+             prot = arrozEsp.nombre;
+             const isSmall = lowerLinea.includes('peque') || lowerLinea.includes('peq') || lowerLinea.includes('pqr') || (preciosEncontrados[0] === 5000);
+             price = isSmall ? arrozEsp.precioSmall : arrozEsp.precioLarge;
+             if (sopaEncontrada) price += 3000;
+          } else {
+             // Buscar en Proteínas estándar
+             const pMatch = menuConfig.proteinas.find(p => {
+               const normP = norm(p);
+               // Match exacto o palabra completa
+               return normResto === normP || normResto.split(' ').includes(normP);
+             });
+
+             if (pMatch) {
+                prot = pMatch;
+                price = sopaEncontrada ? 15000 : 13000;
+             } else if (sopaEncontrada) {
+                prot = 'Solo Sopa';
+                const tieneArroz = lowerLinea.includes('con arroz') || normResto.includes('arroz');
+                price = tieneArroz ? 8000 : 4000;
+             } else if (preciosEncontrados[0]) {
+                prot = 'Arroz Cubano';
+                price = preciosEncontrados[0];
+             } else {
+                prot = 'Corriente';
+                price = 13000;
+             }
+          }
+          itemsDeEstaLinea.push({ proteina: prot, precio: price, sopa: sopaEncontrada });
+       }
+
+       // Buscar cliente existente (normalizado - búsqueda MUY estricta)
+       const normPosible = norm(posibleNombre);
        const clienteExistente = clientes.find(c => {
-         const normC = normalizeStr(c.nombre);
-         return normC.includes(normPosible) || normPosible.includes(normC);
+         const normC = norm(c.nombre);
+         if (normC === normPosible) return true;
+         // Si es un nombre compuesto, permitir match si es el mismo nombre completo
+         if (normC.split(' ').length > 1 || normPosible.split(' ').length > 1) {
+            return normC.includes(normPosible) || normPosible.includes(normC);
+         }
+         return false;
        });
 
-       parsedItems.push({
-          id_temp: Date.now() + index,
-          originalLinea: linea,
-          clienteId: clienteExistente ? clienteExistente.id : 'NUEVO',
-          nuevoNombreCliente: clienteExistente ? '' : posibleNombre,
-          proteina: proteinaEncontrada,
-          sopa: sopaEncontrada,
-          pagado: isPagado,
-          precio: sopaEncontrada ? 15000 : 13000
+       // Agregar todos los ítems detectados en esta línea
+       itemsDeEstaLinea.forEach((subItem, subIndex) => {
+          parsedItems.push({
+             id_temp: Date.now() + index + (subIndex * 1000),
+             originalLinea: linea,
+             clienteId: clienteExistente ? clienteExistente.id : 'NUEVO',
+             nuevoNombreCliente: clienteExistente ? '' : posibleNombre,
+             searchQuery: clienteExistente ? clienteExistente.nombre : posibleNombre,
+             showSuggestions: false,
+             proteina: subItem.proteina,
+             sopa: subItem.sopa,
+             pagado: isPagado,
+             precio: subItem.precio,
+             nota: notaEncontrada
+          });
        });
     });
 
@@ -734,7 +807,7 @@ export default function Cuentas() {
 
           {!selectedCliente && search && (
              <div className="bg-neutral-950 border border-neutral-800 rounded-xl max-h-60 overflow-y-auto">
-                {clientes.filter(c => (c.nombre || '').toLowerCase().includes(search.toLowerCase())).map(c => (
+                {clientes.filter(c => clienteMatches(c.nombre, search)).map(c => (
                   <button key={c.id} onClick={() => seleccionarCliente(c)} className="w-full text-left px-4 py-3 hover:bg-neutral-800 border-b border-neutral-800/50 last:border-0">
                     <span className="font-bold">{c.nombre || 'Cliente Sin Nombre'}</span>
                     {c.es_frecuente && <span className="ml-2 text-xs bg-orange-500/20 text-orange-400 px-2 rounded-lg">Frecuente</span>}
@@ -1084,7 +1157,7 @@ export default function Cuentas() {
                   {stepMasivo === 'review' && (
                      <div className="animate-fade-in space-y-4">
                         <p className="text-neutral-400">Revisa y ajusta los detalles antes de guardarlos. Fecha: <strong className="text-white">{fechaMasiva}</strong></p>
-                        <div className="bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden overflow-x-auto">
+                        <div className="bg-neutral-950 border border-neutral-800 rounded-2xl">
                            <table className="w-full text-left text-sm whitespace-nowrap">
                               <thead className="bg-neutral-900 border-b border-neutral-800 text-neutral-500">
                                  <tr>
@@ -1097,85 +1170,151 @@ export default function Cuentas() {
                                  </tr>
                               </thead>
                               <tbody>
-                                 {itemsMasivos.map((item, idx) => (
-                                    <tr key={item.id_temp} className="border-b border-neutral-800/50 hover:bg-neutral-900/50">
-                                       <td className="p-3">
-                                          {item.clienteId === 'NUEVO' ? (
-                                             <div className="flex flex-col gap-1 w-full">
-                                                <span className="text-[10px] text-orange-400 font-bold bg-orange-500/10 px-2 py-0.5 rounded-full inline-block w-max mb-1">Nuevo Cliente</span>
-                                                <input title={item.originalLinea} type="text" className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full outline-none focus:ring-1 focus:ring-blue-500" value={item.nuevoNombreCliente} onChange={e => {
-                                                   const newItems = [...itemsMasivos];
-                                                   newItems[idx].nuevoNombreCliente = e.target.value;
-                                                   setItemsMasivos(newItems);
-                                                }} />
-                                                <select className="bg-neutral-900 text-neutral-500 p-1 text-xs border border-neutral-800 rounded cursor-pointer w-full mt-1" onChange={e => {
-                                                   if (e.target.value) {
-                                                      const newItems = [...itemsMasivos];
-                                                      newItems[idx].clienteId = e.target.value;
-                                                      setItemsMasivos(newItems);
-                                                   }
-                                                }}>
-                                                   <option value="">¿Es un cliente existente?</option>
-                                                   {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                                                </select>
-                                             </div>
-                                          ) : (
-                                             <div className="flex flex-col gap-1 w-full">
-                                                <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full outline-none focus:ring-1 focus:ring-blue-500 font-bold" value={item.clienteId} onChange={e => {
-                                                   const newItems = [...itemsMasivos];
-                                                   newItems[idx].clienteId = e.target.value;
-                                                   setItemsMasivos(newItems);
-                                                }}>
-                                                   {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                                                   <option value="NUEVO">-- Crear Nuevo Cliente --</option>
-                                                </select>
-                                                <p className="text-[10px] text-neutral-500 truncate mt-1 break-all" title={item.originalLinea}>{item.originalLinea}</p>
-                                             </div>
-                                          )}
-                                       </td>
-                                       <td className="p-3">
-                                          <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full" value={item.proteina} onChange={e => {
-                                             const newItems = [...itemsMasivos];
-                                             newItems[idx].proteina = e.target.value;
-                                             setItemsMasivos(newItems);
-                                          }}>
-                                             {menuConfig.proteinas.map(p => <option key={p} value={p}>{p}</option>)}
-                                          </select>
-                                       </td>
-                                       <td className="p-3">
-                                          <select className="bg-neutral-800 text-white p-2 rounded-lg text-sm w-full" value={item.sopa} onChange={e => {
-                                             const newItems = [...itemsMasivos];
-                                             newItems[idx].sopa = e.target.value;
-                                             setItemsMasivos(newItems);
-                                          }}>
-                                             <option value="">(Sin sopa)</option>
-                                             {menuConfig.sopas.map(s => <option key={s} value={s}>{s}</option>)}
-                                          </select>
-                                       </td>
-                                       <td className="p-3">
-                                          <div className="flex items-center text-white bg-neutral-800 rounded-lg p-2 focus-within:ring-1 focus-within:ring-blue-500">
-                                             <span className="text-neutral-500 mr-1">$</span>
-                                             <input type="number" className="bg-transparent w-full outline-none font-mono" value={item.precio} onChange={e => {
-                                                const newItems = [...itemsMasivos];
-                                                newItems[idx].precio = e.target.value;
-                                                setItemsMasivos(newItems);
-                                             }} />
-                                          </div>
-                                       </td>
-                                       <td className="p-3 text-center">
-                                          <input type="checkbox" className="w-5 h-5 rounded border-neutral-700 bg-neutral-800 text-emerald-500 focus:ring-emerald-500 cursor-pointer" checked={item.pagado} onChange={e => {
-                                             const newItems = [...itemsMasivos];
-                                             newItems[idx].pagado = e.target.checked;
-                                             setItemsMasivos(newItems);
-                                          }} />
-                                       </td>
-                                       <td className="p-3">
-                                          <button onClick={() => {
-                                             setItemsMasivos(itemsMasivos.filter((_, i) => i !== idx));
-                                          }} className="text-red-500 hover:text-red-400 p-2"><Trash2 size={18}/></button>
-                                       </td>
-                                    </tr>
-                                 ))}
+                                  {itemsMasivos.map((item, idx) => (
+                                     <tr key={item.id_temp} className="border-b border-neutral-800/50 hover:bg-neutral-900/50 transition-colors">
+                                        <td className="p-4 align-top w-1/4">
+                                           <div className="relative">
+                                              <div className="flex items-center gap-2 mb-2 min-h-[1.5rem]">
+                                                 {item.clienteId === 'NUEVO' && (
+                                                    <span className="text-[10px] text-orange-400 font-bold bg-orange-500/10 px-2 py-0.5 rounded-full border border-orange-500/20 whitespace-nowrap shadow-sm">Nuevo Cliente</span>
+                                                 )}
+                                                 {item.clienteId !== 'NUEVO' && (
+                                                    <span className="text-[10px] text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20 whitespace-nowrap shadow-sm">Docente Registrado</span>
+                                                 )}
+                                              </div>
+                                              <input 
+                                                 type="text" 
+                                                 className={`bg-neutral-800 text-white p-3 rounded-xl text-sm w-full outline-none transition-all shadow-inner ${item.clienteId === 'NUEVO' ? 'focus:ring-2 focus:ring-orange-500/30 border border-orange-500/20' : 'focus:ring-2 focus:ring-blue-500/30 border border-blue-500/20'} font-bold`} 
+                                                 placeholder="Escribir nombre o asignar..."
+                                                 value={item.searchQuery}
+                                                 onChange={e => {
+                                                    const newQuery = e.target.value;
+                                                    const newItems = [...itemsMasivos];
+                                                    newItems[idx].clienteId = 'NUEVO';
+                                                    newItems[idx].nuevoNombreCliente = newQuery;
+                                                    newItems[idx].searchQuery = newQuery;
+                                                    newItems[idx].showSuggestions = true;
+                                                    setItemsMasivos(newItems);
+                                                 }}
+                                                 onFocus={() => {
+                                                    const newItems = [...itemsMasivos];
+                                                    newItems[idx].showSuggestions = true;
+                                                    setItemsMasivos(newItems);
+                                                 }}
+                                                 onBlur={() => {
+                                                    setTimeout(() => {
+                                                       const newItems = [...itemsMasivos];
+                                                       if (newItems[idx]) {
+                                                          newItems[idx].showSuggestions = false;
+                                                          setItemsMasivos(newItems);
+                                                       }
+                                                    }, 250);
+                                                 }}
+                                              />
+                                              
+                                              {item.showSuggestions && (
+                                                 <div className={`absolute z-50 left-0 right-0 bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl max-h-60 overflow-y-auto overflow-x-hidden animate-fade-in ring-1 ring-black/50 ${idx > itemsMasivos.length - 3 ? 'bottom-full mb-2' : 'mt-2'}`}>
+                                                    {clientes
+                                                       .filter(c => clienteMatches(c.nombre, item.searchQuery || ''))
+                                                       .length === 0 && (
+                                                           <div className="p-4 text-neutral-500 text-xs italic">Sin resultados para "{item.searchQuery}"</div>
+                                                        )}
+                                                     {clientes
+                                                        .filter(c => clienteMatches(c.nombre, item.searchQuery || ''))
+                                                       .slice(0, 15)
+                                                       .map(c => (
+                                                          <button 
+                                                             key={c.id} 
+                                                             className="w-full text-left px-4 py-3 text-sm text-neutral-300 hover:bg-neutral-800 border-b border-neutral-800/50 flex flex-col transition-colors group"
+                                                             onClick={() => {
+                                                                const newItems = [...itemsMasivos];
+                                                                newItems[idx].clienteId = c.id;
+                                                                newItems[idx].nuevoNombreCliente = '';
+                                                                newItems[idx].searchQuery = c.nombre;
+                                                                newItems[idx].showSuggestions = false;
+                                                                setItemsMasivos(newItems);
+                                                             }}
+                                                          >
+                                                             <span className="font-bold group-hover:text-blue-400 transition-colors">{c.nombre}</span>
+                                                             <span className="text-[10px] opacity-50 uppercase tracking-widest mt-0.5">Asignar a este perfil</span>
+                                                          </button>
+                                                       ))
+                                                    }
+                                                    <button 
+                                                       className="w-full text-left px-4 py-3 text-sm text-orange-400 font-black hover:bg-neutral-800 border-t border-neutral-800/50 bg-orange-500/5 transition-colors uppercase tracking-tight"
+                                                       onClick={() => {
+                                                          const newItems = [...itemsMasivos];
+                                                          newItems[idx].clienteId = 'NUEVO';
+                                                          newItems[idx].showSuggestions = false;
+                                                          setItemsMasivos(newItems);
+                                                       }}
+                                                    >
+                                                       + Crear como nuevo cliente
+                                                    </button>
+                                                 </div>
+                                              )}
+                                              <p className="text-[10px] text-neutral-500 truncate mt-2 font-medium opacity-60 italic" title={item.originalLinea}>
+                                                 {item.originalLinea}
+                                              </p>
+                                           </div>
+                                        </td>
+                                        <td className="p-4 align-top">
+                                           <div className="mb-2 min-h-[1.5rem]"></div>
+                                           <select className="bg-neutral-800 text-white p-3 rounded-xl text-sm w-full outline-none border border-neutral-700/50 focus:border-blue-500/50 transition-colors shadow-inner appearance-none cursor-pointer" value={item.proteina} onChange={e => {
+                                              const newItems = [...itemsMasivos];
+                                              newItems[idx].proteina = e.target.value;
+                                              setItemsMasivos(newItems);
+                                           }}>
+                                              {menuConfig.proteinas.map(p => <option key={p} value={p}>{p}</option>)}
+                                              <optgroup label="Arroces Especiales">
+                                                 {menuConfig.arrozEspeciales.map(a => <option key={a.nombre} value={a.nombre}>{a.nombre}</option>)}
+                                              </optgroup>
+                                           </select>
+                                        </td>
+                                        <td className="p-4 align-top">
+                                           <div className="mb-2 min-h-[1.5rem]"></div>
+                                           <select className="bg-neutral-800 text-white p-3 rounded-xl text-sm w-full outline-none border border-neutral-700/50 focus:border-blue-500/50 transition-colors shadow-inner appearance-none cursor-pointer" value={item.sopa} onChange={e => {
+                                              const newItems = [...itemsMasivos];
+                                              newItems[idx].sopa = e.target.value;
+                                              setItemsMasivos(newItems);
+                                           }}>
+                                              <option value="">(Sin sopa)</option>
+                                              {menuConfig.sopas.map(s => <option key={s} value={s}>{s}</option>)}
+                                           </select>
+                                        </td>
+                                        <td className="p-4 align-top w-32">
+                                           <div className="mb-2 min-h-[1.5rem]"></div>
+                                           <div className="flex items-center text-white bg-neutral-800 rounded-xl p-3 border border-neutral-700/50 focus-within:border-blue-500/50 transition-colors shadow-inner">
+                                              <span className="text-neutral-500 mr-1 font-bold">$</span>
+                                              <input type="number" className="bg-transparent w-full outline-none font-mono font-bold" value={item.precio} onChange={e => {
+                                                 const newItems = [...itemsMasivos];
+                                                 newItems[idx].precio = e.target.value;
+                                                 setItemsMasivos(newItems);
+                                              }} />
+                                           </div>
+                                        </td>
+                                        <td className="p-4 align-top text-center w-24">
+                                           <div className="mb-2 min-h-[1.5rem]"></div>
+                                           <div className="flex items-center justify-center p-2 mt-1">
+                                              <input type="checkbox" className="w-6 h-6 rounded-lg border-neutral-700 bg-neutral-800 text-emerald-500 focus:ring-emerald-500/30 cursor-pointer transition-all hover:scale-110" checked={item.pagado} onChange={e => {
+                                                 const newItems = [...itemsMasivos];
+                                                 newItems[idx].pagado = e.target.checked;
+                                                 setItemsMasivos(newItems);
+                                              }} />
+                                           </div>
+                                        </td>
+                                        <td className="p-4 align-top w-20">
+                                           <div className="mb-2 min-h-[1.5rem]"></div>
+                                           <div className="flex items-center justify-center mt-1">
+                                              <button onClick={() => {
+                                                 setItemsMasivos(itemsMasivos.filter((_, i) => i !== idx));
+                                              }} className="text-red-500 hover:text-red-400 p-3 hover:bg-red-500/10 rounded-xl transition-all hover:rotate-12">
+                                                 <Trash2 size={20}/>
+                                              </button>
+                                           </div>
+                                        </td>
+                                     </tr>
+                                  ))}
                                  {itemsMasivos.length === 0 && (
                                     <tr>
                                        <td colSpan={6} className="text-center p-8 text-neutral-500">No hay elementos para procesar.</td>
