@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2, PenLine, Bell, BellOff, ChevronDown, ChevronRight, Soup } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
@@ -13,8 +13,13 @@ export default function Cocina() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [fechaFiltro, setFechaFiltro] = useState<string>(getColombiaDateString());
-  const { permission, requestPermission, notifyNewOrder, playTripleBeep, speakText, speakNewOrder } = useKitchenNotifications();
+  const wakeLockRef = useRef<any>(null);
+  const wakeLockTimeoutRef = useRef<any>(null);
+  const { permission, requestPermission, notifyNewOrder, playBeep, playTripleBeep, speakText, speakNewOrder } = useKitchenNotifications();
   const [toastNotificacion, setToastNotificacion] = useState<{ id: string, titulo: string, msj: string } | null>(null);
+  
+  // Ref para tener siempre la última data en el loop de voz (evitar stale closures)
+  const stateRef = useRef({ pedidos: [] as Pedido[], resumenProteinas: {}, resumenSopas: {}, resumenArroz: {}, resumenMediaSopa: {}, resumenSoloSopaArroz: {}, resumenEspeciales: {}, pedidosPendientes: [] as Pedido[] });
 
   const fetchPedidos = async () => {
     try {
@@ -89,6 +94,30 @@ export default function Cocina() {
     }
     navigate('/');
   };
+
+  // --- Lógica de Screen Wake Lock ---
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator && !wakeLockRef.current) {
+      try {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        console.log("🔓 Screen Wake Lock activo");
+        wakeLockRef.current.addEventListener('release', () => {
+           wakeLockRef.current = null;
+           console.log("🔒 Screen Wake Lock liberado");
+        });
+      } catch (err) {
+        console.error("Error activando Wake Lock:", err);
+      }
+    }
+  };
+
+  const releaseWakeLock = () => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release();
+      wakeLockRef.current = null;
+    }
+  };
+
 
   // Helper: flatten items from a pedido (multi-item aware)
   const getItems = (p: Pedido): any[] => {
@@ -178,11 +207,43 @@ export default function Cocina() {
     return acc;
   }, {} as Record<string, number>);
 
+  // --- Efecto de Screen Wake Lock ---
+  useEffect(() => {
+    const hayPedidos = pedidosPendientes.length > 0;
+
+    if (hayPedidos) {
+      if (wakeLockTimeoutRef.current) {
+        clearTimeout(wakeLockTimeoutRef.current);
+        wakeLockTimeoutRef.current = null;
+      }
+      requestWakeLock();
+    } else {
+      if (!wakeLockTimeoutRef.current) {
+        wakeLockTimeoutRef.current = setTimeout(() => {
+          releaseWakeLock();
+          wakeLockTimeoutRef.current = null;
+        }, 12 * 60 * 1000); 
+      }
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && pedidosPendientes.length > 0) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [pedidosPendientes.length]);
+
   const totalSopas = pedidos.reduce((acc, p) => { 
     if (p.estado_cocina === 'empacado') return acc;
     getItems(p).forEach(it => { if (it?.sopa && !it.completado) acc += (it.cantidad || 1); }); 
     return acc; 
   }, 0);
+
   const totalProteinas = pedidos.reduce((acc, p) => { 
     if (p.estado_cocina === 'empacado') return acc;
     getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack' && !it.completado) acc += (it.cantidad || 1); }); 
@@ -224,16 +285,32 @@ export default function Cocina() {
     };
   };
 
+
+
   const resumenEspeciales = pedidosPendientes.reduce((acc, p) => {
     getItems(p).forEach(item => {
-      const { completa, faltantes } = getEstadoPlato(item);
-      if (!completa) {
-        const desc = `${item.proteina} sin ${faltantes.join(' ni ')}`;
+      const { completaBot, faltantesBot } = getEstadoPlato(item);
+      if (!completaBot && item.proteina !== 'Solo Sopa') {
+        const desc = `${item.proteina} sin ${faltantesBot.join(' ni ')}`;
         acc[desc] = (acc[desc] || 0) + (item.cantidad || 1);
       }
     });
     return acc;
   }, {} as Record<string, number>);
+
+  // Actualizar el ref en cada render (después de que se declaren las variables)
+  useEffect(() => {
+    stateRef.current = { 
+      pedidos, 
+      resumenProteinas, 
+      resumenSopas, 
+      resumenArroz, 
+      resumenMediaSopa, 
+      resumenSoloSopaArroz, 
+      resumenEspeciales, 
+      pedidosPendientes 
+    };
+  }, [pedidos, resumenProteinas, resumenSopas, resumenArroz, resumenMediaSopa, resumenSoloSopaArroz, resumenEspeciales, pedidosPendientes]);
 
   const totalEspeciales = Object.values(resumenEspeciales).reduce((a, b) => a + b, 0);
   const realesCompletos = pedidosPendientes.reduce((acc, p) => {
@@ -245,82 +322,159 @@ export default function Cocina() {
   }, 0);
 
 
+  const timerRef = useRef<any>(null);
+
+  // Función para programar la próxima narración
+  const programarProximaNarracion = (delayMs: number) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      narrarResumenDetallado(true);
+    }, delayMs);
+  };
+
   // Función para narrar el resumen detallado
-  const narrarResumenDetallado = () => {
-    if (pedidosPendientes.length === 0) {
-      speakText("Todo está al día. No hay pedidos pendientes.");
+  const narrarResumenDetallado = (autoSchedule = false) => {
+    const { 
+       pedidosPendientes: pps, 
+       resumenProteinas: rPs, 
+       resumenSopas: rSs, 
+       resumenArroz: rAs, 
+       resumenMediaSopa: rMS, 
+       resumenSoloSopaArroz: rSSA, 
+       resumenEspeciales: rEs 
+    } = stateRef.current;
+
+    if (pps.length === 0) {
+      // Si no hay pedidos, no programar la siguiente. El useEffect la reiniciará cuando llegue uno.
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
       return;
     }
 
-    let texto = `Resumen de cocina. `;
+    // Reproducir tono triple antes de hablar
+    playTripleBeep();
+
+    let texto = `Resumen actual. `;
     
     // 1. Sopas
-    const sops = Object.entries(resumenSopas);
+    const sops = Object.entries(rSs);
     if (sops.length > 0) {
       const parts = sops.map(([s, c]) => {
-        const medias = resumenMediaSopa[s] || 0;
+        const medias = (rMS as any)[s] || 0;
         if (medias > 0) {
-          if (medias === c) return `${c} ${c === 1 ? 'media' : 'medias'} de ${s}`;
-          return `${c} ${s} (${medias} de ${medias === 1 ? 'ella' : 'ellas'} media)`;
+          if (medias === c) return `${c} ${s} que ${c === 1 ? 'es media' : 'son medias'}`;
+          // Frase: "X [sopa], de los cuales Y [sopa] es media"
+          return `${c} ${s}, de las cuales ${medias} ${medias === 1 ? s + ' es media' : s + ' son medias'}`;
         }
         return `${c} ${s}`;
       });
       texto += `Tenemos ${parts.join(' y ')}. `;
     }
-    
-    // 2. Arroces
-    const arros = Object.entries(resumenArroz);
-    if (arros.length > 0) {
-      const parts = arros.map(([n, i]) => {
-        const det = [];
-        if (i.pequeña > 0) det.push(`${i.pequeña} pequeña`);
-        if (i.grande > 0) det.push(`${i.grande} grande`);
-        return `${i.total} ${n} (${det.join(' y ')})`;
-      });
-      texto += `Tenemos ${parts.join(', ')}. `;
-    }
 
-    // 3. Proteínas (Todas las pendientes, para que no falte nada en voz)
-    const prots = Object.entries(resumenProteinas);
-    if (prots.length > 0) {
-      texto += `En platos normales hay: ${prots.map(([p, c]) => `${c} ${p}`).join(', ')}. `;
-    }
+    // 2. Proteínas Agrupadas
+    interface InfoProt { total: number; completas: number; variaciones: Record<string, number> }
+    const protsAgrupadas: Record<string, InfoProt> = {};
 
-    // 4. Detalles de Acompañantes (Solo Arroz y Ensalada)
-    const resumenFaltantesBot: Record<string, number> = {};
-    pedidosPendientes.forEach(p => {
-      getItems(p).forEach(item => {
-        const { completaBot, faltantesBot } = getEstadoPlato(item);
-        if (!completaBot && !item.completado) {
-          const desc = `${item.proteina} sin ${faltantesBot.join(' ni ')}`;
-          resumenFaltantesBot[desc] = (resumenFaltantesBot[desc] || 0) + (item.cantidad || 1);
+    pps.forEach(p => {
+      getItems(p).forEach(it => {
+        const prot = it?.proteina;
+        const cant = it?.cantidad || 1;
+        const isCompletado = it?.completado === true;
+        
+        if (prot && !isCompletado && prot !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack') {
+          if (!protsAgrupadas[prot]) protsAgrupadas[prot] = { total: 0, completas: 0, variaciones: {} };
+          
+          protsAgrupadas[prot].total += cant;
+          
+          const acc = it.acompanamientos || [];
+          const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
+          const faltantesBot = [];
+          if (!acc.includes('Arroz')) faltantesBot.push('Arroz');
+          if (!acc.includes('Ensalada')) faltantesBot.push('Ensalada');
+          if (!tienePrincipe) faltantesBot.push('acompañante');
+          
+          const completaBot = faltantesBot.length === 0;
+          
+          if (completaBot) {
+            protsAgrupadas[prot].completas += cant;
+          } else {
+            const soloKey = `solo ${prot}`;
+            const desc = faltantesBot.length === 3 ? soloKey : `sin ${faltantesBot.join(' ni ')}`;
+            protsAgrupadas[prot].variaciones[desc] = (protsAgrupadas[prot].variaciones[desc] || 0) + cant;
+          }
         }
       });
     });
 
-    const especialesVoz = Object.entries(resumenFaltantesBot);
-    if (especialesVoz.length > 0) {
-      texto += `Atención: ${especialesVoz.map(([desc, cant]) => `${cant} ${desc}`).join(', ')}. `;
+    const entriesProts = Object.entries(protsAgrupadas);
+    if (entriesProts.length > 0) {
+      const frases = entriesProts.map(([p, info]) => {
+        const soloKey = `solo ${p}`;
+        const totalSolo = info.variaciones[soloKey] || 0;
+
+        if (info.total === totalSolo) {
+          return `${info.total} ${p} que ${info.total === 1 ? 'es solo la proteína' : 'son solo la proteína'}`;
+        }
+        if (info.total === info.completas) {
+          return `${info.total} ${p} con todo`;
+        }
+
+        const det = [];
+        if (info.completas > 0) det.push(`${info.completas} ${info.completas === 1 ? 'con todo' : 'con todo'}`);
+        Object.entries(info.variaciones).forEach(([d, c]) => {
+          const descFinal = d === soloKey ? `${c === 1 ? 'una es' : c + ' son'} solo la proteína` : d;
+          det.push(`${c} ${descFinal}`);
+        });
+        return `${info.total} ${p}, de las cuales<sup>*</sup> ${det.join(' y ')}`;
+      });
+      texto += `En platos normales hay: ${frases.join(' y ').replace('<sup>*</sup>', '')}. `;
     }
 
-    // 5. Solo Sopa con Arroz (si hay)
-    const ssos = Object.entries(resumenSoloSopaArroz);
+    // 3. Arroces
+    const arroces = Object.entries(rAs);
+    if (arroces.length > 0) {
+      const frasesArr = arroces.map(([n, i]: [string, any]) => {
+        const det = [];
+        if (i.grande > 0) det.push(`${i.grande} ${i.grande === 1 ? 'grande' : 'grandes'}`);
+        if (i.pequeña > 0) det.push(`${i.pequeña} ${i.pequeña === 1 ? 'pequeña' : 'pequeñas'}`);
+        return `${i.total} ${n} (${det.join(' y ')})`;
+      });
+      texto += `En platos de arroz hay: ${frasesArr.join(' y ')}. `;
+    }
+
+
+    // 5. Solo Sopa con Arroz
+    const ssos = Object.entries(rSSA);
     if (ssos.length > 0) {
-      texto += `También hay ${ssos.map(([desc, cant]) => `${cant} ${desc}`).join(', ')}. `;
+      texto += `También hay ${ssos.map(([desc, cant]: [string, any]) => `${cant} ${desc}`).join(', ')}. `;
     }
 
-    speakText(texto);
+    speakText(texto, () => {
+      if (autoSchedule) {
+        programarProximaNarracion(30 * 1000);
+      }
+    });
   };
 
-  // Recordatorio periódico (cada 1 minuto para pruebas)
+  // Recordatorio periódico: Iniciar ciclo cuando hay pedidos, detener cuando no
   useEffect(() => {
-    const INTERVAL_MS = 1 * 60 * 1000; // 1 minuto (temporal para pruebas)
-    const interval = setInterval(() => {
-      narrarResumenDetallado();
-    }, INTERVAL_MS);
+    const hayPedidos = pedidosPendientes.length > 0;
 
-    return () => clearInterval(interval);
-  }, [pedidos, speakText, totalHoy, resumenProteinas, resumenSopas, resumenArroz, pedidosPendientes, resumenEspeciales, realesCompletos]);
+    if (hayPedidos && !timerRef.current) {
+      // Iniciar el ciclo de narración
+      narrarResumenDetallado(true);
+    } else if (!hayPedidos && timerRef.current) {
+      // Detener el ciclo si la lista se vacía
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [pedidosPendientes.length]);
 
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
@@ -457,10 +611,7 @@ export default function Cocina() {
             
             {/* Prueba de Sonido/Voz */}
             <button
-              onClick={() => {
-                playTripleBeep();
-                setTimeout(() => narrarResumenDetallado(), 1000);
-              }}
+              onClick={() => narrarResumenDetallado()}
               className="p-2 rounded-xl border border-neutral-700 bg-neutral-800 text-neutral-400 hover:text-white transition-colors flex items-center gap-2"
               title="Probar Resumen de Voz"
             >
@@ -565,7 +716,7 @@ export default function Cocina() {
                   ) : (
                     // Single-item legacy display
                     <>
-                      <p className="flex justify-between"><span className="text-neutral-500">Proteína:</span> <span className="font-bold text-white text-lg">{p.detalle?.proteina}</span></p>
+                      <p className="flex justify-between"><span className="text-neutral-500">{p.detalle?.tipoPlato === 'arroz' ? 'Arroz Especial:' : 'Proteína:'}</span> <span className="font-bold text-white text-lg">{p.detalle?.proteina}</span></p>
                       <p className="flex justify-between"><span className="text-neutral-500">Acompañ.:</span> <span className="text-right text-sm">{p.detalle?.acompanamientos?.join(', ')}</span></p>
                       <div className="flex justify-between items-center py-2 px-3 bg-neutral-950 rounded-xl border border-neutral-800">
                         <span className="text-neutral-500 text-xs font-bold uppercase">Sopa:</span>

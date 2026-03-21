@@ -135,6 +135,37 @@ export function useKitchenNotifications() {
     }
   }, []);
 
+  /** Reproduce un tono limpio usando AudioContext */
+  const playTono = useCallback((freq = 880, dur = 0.3, vol = 0.3) => {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      gain.gain.setValueAtTime(vol, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      
+      osc.start();
+      osc.stop(ctx.currentTime + dur);
+    } catch (e) {
+      console.error("Error al generar tono:", e);
+    }
+  }, []);
+
+  const playTripleBeep = useCallback(() => {
+    playTono(880, 0.2);
+    setTimeout(() => playTono(987.77, 0.2), 200);
+    setTimeout(() => playTono(1108.73, 0.2), 400);
+  }, [playTono]);
+
   /** Beep de dos tonos — fallback cuando el browser está abierto y en foco */
   const playBeep = useCallback(() => {
     try {
@@ -157,44 +188,18 @@ export function useKitchenNotifications() {
     } catch (_) {}
   }, []);
 
-  /** Triple pitido más fuerte y urgente */
-  const playTripleBeep = useCallback(() => {
-    try {
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-      
-      const playTone = (freq: number, start: number, dur: number, type: OscillatorType, vol: number) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
-        gain.gain.setValueAtTime(vol, ctx.currentTime + start);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
-        osc.start(ctx.currentTime + start);
-        osc.stop(ctx.currentTime + start + dur);
-      };
-
-      // Triple pitido con onda cuadrada (más estridente/fuerte)
-      [0, 0.2, 0.4].forEach((start, i) => {
-        playTone(1000 + (i * 100), start, 0.15, 'square', 0.3);
-      });
-    } catch (_) {}
-  }, []);
-
-  const speechQueue = useRef<string[]>([]);
+  const speechQueue = useRef<{ text: string, onEnd?: () => void }[]>([]);
   const isSpeaking = useRef(false);
+  const currentCallback = useRef<(() => void) | undefined>(undefined);
   const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const processQueue = useCallback(() => {
-    if (isSpeaking.current || speechQueue.current.length === 0) return;
-
-    const text = speechQueue.current.shift();
-    if (!text) return;
+    if (isSpeaking.current || speechQueue.current.length === 0 || !('speechSynthesis' in window)) return;
 
     isSpeaking.current = true;
-    const utterance = new SpeechSynthesisUtterance(text);
+    const item = speechQueue.current.shift()!;
+    const utterance = new SpeechSynthesisUtterance(item.text);
+    currentCallback.current = item.onEnd;
     
     // Configuración de voz (persistente por sesión/instancia)
     if (!selectedVoiceRef.current) {
@@ -212,11 +217,19 @@ export function useKitchenNotifications() {
     utterance.pitch = 1;
 
     utterance.onend = () => {
+      if (currentCallback.current) {
+        currentCallback.current();
+        currentCallback.current = undefined;
+      }
       isSpeaking.current = false;
       setTimeout(processQueue, 500); // Pequeña pausa entre mensajes
     };
 
     utterance.onerror = () => {
+      if (currentCallback.current) {
+        currentCallback.current();
+        currentCallback.current = undefined;
+      }
       isSpeaking.current = false;
       processQueue();
     };
@@ -225,9 +238,12 @@ export function useKitchenNotifications() {
   }, []);
 
   /** Narrador de voz (TTS) */
-  const speakText = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) return;
-    speechQueue.current.push(text);
+  const speakText = useCallback((text: string, onEnd?: () => void) => {
+    if (!('speechSynthesis' in window)) {
+      if (onEnd) onEnd();
+      return;
+    }
+    speechQueue.current.push({ text, onEnd });
     processQueue();
   }, [processQueue]);
 
@@ -258,6 +274,11 @@ export function useKitchenNotifications() {
         // El acompañante frito (Príncipe)
         const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
         if (!tienePrincipe) faltantes.push('acompañante');
+      }
+      
+      // Si no tiene nada (sin arroz, ni ensalada, ni acompañante), decir "Solo [Proteina]"
+      if (faltantes.length === 3) {
+        return `Solo ${it.proteina}`;
       }
       
       if (faltantes.length > 0) desc += ` sin ${faltantes.join(' ni ')}`;
