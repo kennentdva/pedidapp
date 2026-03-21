@@ -51,7 +51,7 @@ export default function Cuentas() {
   const [stepMasivo, setStepMasivo] = useState<'input' | 'review'>('input');
   
   // Custom Modal
-  const [abonoToDelete, setAbonoToDelete] = useState<{ id: string, monto: number } | null>(null);
+  const [abonoToDelete, setAbonoToDelete] = useState<{ id: string, monto: number, metodo?: string } | null>(null);
 
   const menuConfig = useOrderStore(state => state.menuConfig);
 
@@ -134,30 +134,51 @@ export default function Cuentas() {
 
     const sortedPedidos = [...historialPedidos].sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime());
     
+    // Primero restamos el valor de los pedidos ya marcados como pagados directamente (Targeted)
+    const pedidosTargeted = sortedPedidos.filter(p => p.pagado);
+    const sumTargeted = pedidosTargeted.reduce((acc, p) => acc + p.valor, 0);
+    
+    // El "Fondo General" es lo que sobra para repartir FIFO entre el resto
+    let fondoGeneral = Math.max(0, abonosDisponibles - sumTargeted);
+
     const pedidosLedger = sortedPedidos.map(p => {
-      let calcPagado = false;
-      if (abonosDisponibles >= p.valor) {
-        calcPagado = true;
-        abonosDisponibles -= p.valor;
+      let montoPagado = 0;
+      let montoPendiente = p.valor;
+
+      if (p.pagado) {
+        // Si está marcado como pagado en DB, asumimos cubierto al 100%
+        montoPagado = p.valor;
+        montoPendiente = 0;
+      } else {
+        // Si no, aplicamos del fondo general (FIFO)
+        const cubierto = Math.min(fondoGeneral, p.valor);
+        montoPagado = cubierto;
+        montoPendiente = p.valor - cubierto;
+        fondoGeneral -= cubierto;
       }
-      return { ...p, calcPagado };
+
+      return { ...p, montoPagado, montoPendiente, calcPagado: montoPendiente === 0 };
     });
 
-    let abonosConsumidos = pagosRealizados.reduce((acc, p) => acc + p.monto, 0) - abonosDisponibles;
+    const abonosConsumidosGeneral = Math.max(0, (abonosDisponibles - sumTargeted) - fondoGeneral);
+    
+    let consumedAcc = abonosConsumidosGeneral;
     const pagosLedger = sortedPagos.map(p => {
       let calcArchivado = false;
-      if (abonosConsumidos >= p.monto) {
+      // Los abonos manuales de "Saldar Día" (metodo === 'Saldado' o similar) no se archivan fácilmente
+      // Para simplificar y dar visibilidad, mantenemos todos los abonos visibles que no sean antiguos consumidos por FIFO
+      if (consumedAcc >= p.monto) {
          calcArchivado = true;
-         abonosConsumidos -= p.monto;
-      } else if (abonosConsumidos > 0) {
-         abonosConsumidos = 0;
+         consumedAcc -= p.monto;
+      } else if (consumedAcc > 0) {
+         consumedAcc = 0;
       }
       return { ...p, calcArchivado };
     });
 
     return { 
       pedidosLedger: pedidosLedger.reverse(), 
-      abonosDisponibles, 
+      abonosDisponibles: fondoGeneral, 
       pagosLedger: pagosLedger.reverse() 
     };
   };
@@ -228,7 +249,7 @@ export default function Cuentas() {
     const { error: errPago } = await supabase.from('pagos').insert([{
       cliente_id: selectedCliente.id,
       monto: p.valor,
-      metodo: 'Efectivo'
+      metodo: metodo // Usamos el método seleccionado (Efectivo/Transferencia) que es válido para el ENUM
     }]);
     if (errPago) {
       alert('Error al registrar el pago: ' + errPago.message);
@@ -246,6 +267,14 @@ export default function Cuentas() {
     if (!abonoToDelete) return;
     
     setLoading(true);
+
+    // Búsqueda del plato para quitarle la marca de pagado
+    // Al ser un ENUM no podemos guardar el ID, así que buscamos por valor y estado
+    const pedidoToReset = historialPedidos.find(p => p.pagado && p.valor === abonoToDelete.monto);
+    if (pedidoToReset) {
+      await supabase.from('pedidos').update({ pagado: false }).eq('id', pedidoToReset.id!);
+    }
+
     const { error } = await supabase.from('pagos').delete().eq('id', abonoToDelete.id);
     
     if (!error) {
@@ -1054,36 +1083,48 @@ export default function Cuentas() {
                               <CalendarDays size={10}/> {d.toLocaleDateString()}
                             </p>
                           </div>
-                         <div className="text-right flex flex-col items-end gap-1">
-                           {editingPrecioId === p.id ? (
-                             <div className="flex gap-1">
-                               <input 
-                                 type="number" 
-                                 className="w-20 bg-neutral-800 text-white rounded px-1 text-sm font-bold border border-blue-500"
-                                 value={nuevoPrecio}
-                                 onChange={e => setNuevoPrecio(e.target.value)}
-                                 autoFocus
-                                 onBlur={() => guardarNuevoPrecio(p.id!)}
-                                 onKeyDown={e => e.key === 'Enter' && guardarNuevoPrecio(p.id!)}
-                               />
-                             </div>
-                           ) : (
-                             <p 
-                               className={`font-black text-lg cursor-pointer hover:text-blue-400 ${p.calcPagado ? 'text-emerald-400 line-through opacity-50' : 'text-orange-400'}`}
-                               onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}
-                             >
-                               ${p.valor.toLocaleString()}
-                             </p>
-                           )}
-                           {!p.calcPagado && (
-                             <button 
-                               onClick={() => saldarPedidoEspecifico(p)}
-                               className="text-[10px] bg-emerald-600/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-600 hover:text-white transition-colors"
-                             >
-                               Saldar Día
-                             </button>
-                           )}
-                         </div>
+                          <div className="text-right flex flex-col items-end gap-1">
+                            {editingPrecioId === p.id ? (
+                              <div className="flex gap-1">
+                                <input 
+                                  type="number" 
+                                  className="w-20 bg-neutral-800 text-white rounded px-1 text-sm font-bold border border-blue-500"
+                                  value={nuevoPrecio}
+                                  onChange={e => setNuevoPrecio(e.target.value)}
+                                  autoFocus
+                                  onBlur={() => guardarNuevoPrecio(p.id!)}
+                                  onKeyDown={e => e.key === 'Enter' && guardarNuevoPrecio(p.id!)}
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-end">
+                                <p 
+                                  className={`font-black text-lg cursor-pointer hover:text-blue-400 ${(p as any).calcPagado ? 'text-emerald-400' : (p as any).montoPagado > 0 ? 'text-orange-300' : 'text-orange-400'}`}
+                                  onClick={() => { setEditingPrecioId(p.id!); setNuevoPrecio(p.valor); }}
+                                >
+                                  ${p.valor.toLocaleString()}
+                                </p>
+                                {(p as any).montoPagado > 0 && !(p as any).calcPagado && (
+                                  <p className="text-[9px] font-bold text-emerald-500 uppercase">
+                                    Cubierto: ${(p as any).montoPagado.toLocaleString()}
+                                  </p>
+                                )}
+                                {(p as any).montoPendiente > 0 && (p as any).montoPagado > 0 && (
+                                  <p className="text-[9px] font-bold text-red-400 uppercase">
+                                    Resta: ${(p as any).montoPendiente.toLocaleString()}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                            {!(p as any).calcPagado && (
+                              <button 
+                                onClick={() => saldarPedidoEspecifico(p)}
+                                className="text-[10px] bg-emerald-600/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-600 hover:text-white transition-colors mt-1"
+                              >
+                                Saldar Día
+                              </button>
+                            )}
+                          </div>
                        </div>
                      )
                    })}
@@ -1106,16 +1147,16 @@ export default function Cuentas() {
                             <p className="text-[10px] text-neutral-500 uppercase font-bold">{pago.metodo} • {d.toLocaleDateString()}</p>
                           </div>
                           <div className="flex gap-2">
-                            <button 
-                               onClick={() => setAbonoToDelete({ id: pago.id!, monto: pago.monto })} 
-                               className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
-                               title="Eliminar abono"
-                            >
-                               <Trash2 size={16}/>
-                            </button>
-                            <div className={`p-2 rounded-lg ${pago.calcArchivado ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                               <TrendingDown size={16} className="rotate-180"/>
-                            </div>
+                             <button 
+                                onClick={() => setAbonoToDelete({ id: (pago as any).id!, monto: (pago as any).monto, metodo: (pago as any).metodo })} 
+                                className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
+                                title="Eliminar abono"
+                             >
+                                <Trash2 size={16}/>
+                             </button>
+                             <div className={`p-2 rounded-lg ${pago.calcArchivado ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                <TrendingDown size={16} className="rotate-180"/>
+                             </div>
                           </div>
                        </div>
                      )

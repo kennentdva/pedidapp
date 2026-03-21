@@ -107,33 +107,31 @@ export function useKitchenNotifications() {
       return;
     }
 
-    setPermission('granted');
-    permissionRef.current = 'granted';
+    if (result === 'granted') {
+      setPermission('granted');
+      permissionRef.current = 'granted';
 
-    // 5. Registrar SW y suscribir a Web Push
-    try {
-      console.log('Iniciando registro de SW...');
-      const reg = await registerServiceWorker();
-      if (!reg) {
-        throw new Error('No se pudo registrar el Service Worker. ¿Estás en HTTPS?');
-      }
+      // 5. Registrar SW y suscribir a Web Push
+      try {
+        console.log('Iniciando registro de SW...');
+        const reg = await registerServiceWorker();
+        if (!reg) {
+          throw new Error('No se pudo registrar el Service Worker.');
+        }
 
-      if (!VAPID_PUBLIC_KEY) {
-        alert('Error: Falta VITE_VAPID_PUBLIC_KEY en la configuración (Vercel).');
-        return;
-      }
+        // Tocar un sonido de prueba para despertar el AudioContext en este este click
+        playBeep();
 
-      console.log('Suscribiendo a Web Push...');
-      const sub = await subscribeToPush(reg);
-      if (sub) {
-        await saveSubscription(sub);
-        alert('✅ ¡Notificaciones activadas con éxito!');
-      } else {
-        throw new Error('El navegador no pudo crear la suscripción push.');
+        if (VAPID_PUBLIC_KEY) {
+          console.log('Suscribiendo a Web Push...');
+          const sub = await subscribeToPush(reg);
+          if (sub) await saveSubscription(sub);
+        }
+        
+        alert('✅ ¡Alertas activadas! Deberías haber escuchado un "beep".');
+      } catch (err: any) {
+        console.error('Error en registro push:', err);
       }
-    } catch (err: any) {
-      console.error('Error en registro push:', err);
-      alert('Error al activar notificaciones: ' + (err.message || 'Error desconocido'));
     }
   }, []);
 
@@ -165,15 +163,30 @@ export function useKitchenNotifications() {
    * - Emite el beep de audio como respaldo inmediato
    */
   const notifyNewOrder = useCallback((titulo: string, cuerpo: string) => {
+    // 1. Intentar sonido siempre
     playBeep();
-    if (permissionRef.current !== 'granted') return;
-    try {
-      // Fallback: notificación directa si el SW no está disponible
-      if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) {
-        new Notification(titulo, { body: cuerpo, icon: '/icon-192.png', tag: 'nuevo-pedido' });
+
+    // 2. Notificación local si tenemos permiso
+    if (permissionRef.current === 'granted') {
+      try {
+        // Usamos registration.showNotification si existe el SW, es más potente que "new Notification"
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready.then(reg => {
+            reg.showNotification(titulo, {
+              body: cuerpo,
+              icon: '/icon-192.png',
+              badge: '/icon-192.png',
+              tag: 'nuevo-pedido', // El mismo tag evita duplicados si el servidor envía otro push
+              vibrate: [200, 100, 200]
+            } as any);
+          });
+        } else {
+          new Notification(titulo, { body: cuerpo, icon: '/icon-192.png', tag: 'nuevo-pedido' });
+        }
+      } catch (e) {
+        console.error('Error al mostrar notificación local:', e);
       }
-      // Si hay SW, él recibirá el push desde el servidor automáticamente
-    } catch (_) {}
+    }
   }, [playBeep]);
 
   return { permission, requestPermission, playBeep, notifyNewOrder };
