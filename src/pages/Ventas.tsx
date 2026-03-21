@@ -80,7 +80,7 @@ export default function Ventas() {
   const labelItem = (item: ItemPedido) => {
     if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack') return item.proteina || '-';
     let l = item.proteina || '-';
-    if (item.sopa) l += ` + ${item.sopa}`;
+    if (item.sopa) l += ` + ${item.mediaSopa ? 'Media ' : ''}${item.sopa}`;
     if (item.acompanamientos.length) l += ` (${item.acompanamientos.join(', ')})`;
     return l;
   };
@@ -96,7 +96,8 @@ export default function Ventas() {
       tipoPlato: store.detalle.tipoPlato, 
       valor: store.valorBase,
       cantidad: 1,
-      completado: false
+      completado: false,
+      mediaSopa: store.detalle.mediaSopa
     });
     if (itemsFinales.length === 0) { alert("Agrega al menos una comida."); return; }
     if (!store.responsable && !store.beneficiario.trim()) { alert("Selecciona un cliente o ingresa el beneficiario."); return; }
@@ -367,7 +368,14 @@ export default function Ventas() {
               <p className="text-[10px] uppercase font-bold text-orange-500/60 mb-1">Armando ahora...</p>
               <div className="text-sm text-neutral-300 space-y-1">
                 <div className="flex justify-between"><span className="text-neutral-500">{store.detalle.tipoPlato === 'arroz' ? '🍚' : store.detalle.tipoPlato === 'snack' ? '🍦' : '🍗'}:</span><span className={`font-bold truncate ml-2 ${store.detalle.tipoPlato === 'arroz' ? 'text-yellow-300' : store.detalle.tipoPlato === 'snack' ? 'text-cyan-300' : 'text-white'}`}>{store.detalle.proteina}</span></div>
-                {store.detalle.sopa && <div className="flex justify-between"><span className="text-neutral-500">Sopa:</span><span className="text-orange-300">{store.detalle.sopa}</span></div>}
+                {store.detalle.sopa && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-neutral-500">Sopa:</span>
+                    <span className="text-orange-300 font-bold">
+                      {store.detalle.mediaSopa ? 'Media ' : ''}{store.detalle.sopa}
+                    </span>
+                  </div>
+                )}
                 {store.detalle.acompanamientos.length > 0 && <div className="flex justify-between"><span className="text-neutral-500">Acompañ.:</span><span className="text-xs">{store.detalle.acompanamientos.join(', ')}</span></div>}
               </div>
               <div className="mt-2 border-t border-neutral-800 pt-2 flex justify-between items-center">
