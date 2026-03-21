@@ -248,8 +248,12 @@ export default function Cocina() {
     
     // Sopas
     const sops = Object.entries(resumenSopas);
+    const medSops = Object.entries(resumenMediaSopa);
     if (sops.length > 0) {
-      texto += `Tenemos ${totalSopas} sopas: ${sops.map(([s, c]) => `${c} ${s}`).join(', ')}. `;
+      texto += `Tenemos ${totalSopas} sopas en total: ${sops.map(([s, c]) => `${c} de ${s}`).join(', ')}. `;
+      if (medSops.length > 0) {
+        texto += `De estas, ${medSops.map(([s, c]) => `${c} son medias de ${s}`).join(' y ')}. `;
+      }
     }
 
     // Arroces
@@ -538,7 +542,12 @@ export default function Cocina() {
                       <p className="flex justify-between"><span className="text-neutral-500">Acompañ.:</span> <span className="text-right text-sm">{p.detalle?.acompanamientos?.join(', ')}</span></p>
                       <div className="flex justify-between items-center py-2 px-3 bg-neutral-950 rounded-xl border border-neutral-800">
                         <span className="text-neutral-500 text-xs font-bold uppercase">Sopa:</span>
-                        <span className={`font-black text-sm uppercase ${p.detalle?.sopa ? 'text-orange-400' : 'text-neutral-700'}`}>{p.detalle?.sopa ? `🍲 ${p.detalle.sopa}` : 'Sin sopa'}</span>
+                        <div className="flex flex-col items-end">
+                          <span className={`font-black text-sm uppercase ${p.detalle?.sopa ? 'text-orange-400' : 'text-neutral-700'}`}>{p.detalle?.sopa ? `🍲 ${p.detalle.sopa}` : 'Sin sopa'}</span>
+                          {p.detalle?.sopa && p.detalle.mediaSopa && (
+                            <span className="text-[10px] font-black bg-amber-500 text-white px-1.5 rounded-full mt-1 animate-pulse italic">🥣 MEDIA (MITAD)</span>
+                          )}
+                        </div>
                       </div>
                       {p.detalle?.extras && p.detalle.extras.length > 0 && (<p className="flex justify-between"><span className="text-purple-400">Extras:</span> <span className="text-right text-sm text-purple-300">{p.detalle.extras.join(', ')}</span></p>)}
                       {p.detalle?.nota && (<div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg"><p className="text-yellow-400 text-sm font-medium italic">⚠️ Nota: {p.detalle.nota}</p></div>)}
