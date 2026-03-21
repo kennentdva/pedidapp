@@ -453,7 +453,7 @@ export default function Cocina() {
 
     speakText(texto, () => {
       if (autoSchedule) {
-        programarProximaNarracion(30 * 1000);
+        programarProximaNarracion(15 * 60 * 1000);
       }
     });
   };
