@@ -138,7 +138,7 @@ export function useKitchenNotifications() {
   /** Beep de dos tonos — fallback cuando el browser está abierto y en foco */
   const playBeep = useCallback(() => {
     try {
-      if (!audioCtxRef.current) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') ctx.resume();
       const play = (freq: number, start: number, dur: number, type: OscillatorType, vol: number) => {
@@ -157,14 +157,126 @@ export function useKitchenNotifications() {
     } catch (_) {}
   }, []);
 
+  /** Triple pitido más fuerte y urgente */
+  const playTripleBeep = useCallback(() => {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+      
+      const playTone = (freq: number, start: number, dur: number, type: OscillatorType, vol: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+        gain.gain.setValueAtTime(vol, ctx.currentTime + start);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + dur);
+      };
+
+      // Triple pitido con onda cuadrada (más estridente/fuerte)
+      [0, 0.2, 0.4].forEach((start, i) => {
+        playTone(1000 + (i * 100), start, 0.15, 'square', 0.3);
+      });
+    } catch (_) {}
+  }, []);
+
+  const speechQueue = useRef<string[]>([]);
+  const isSpeaking = useRef(false);
+
+  const processQueue = useCallback(() => {
+    if (isSpeaking.current || speechQueue.current.length === 0) return;
+
+    const text = speechQueue.current.shift();
+    if (!text) return;
+
+    isSpeaking.current = true;
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Configuración de voz...
+    // Priorizar voces femeninas ("Chica")
+    const voices = window.speechSynthesis.getVoices();
+    const naturalVoice = voices.find(v => 
+      (v.name.includes('Helena') || v.name.includes('Sabina') || v.name.includes('Lucia') || v.name.includes('Zira')) && v.lang.includes('es')
+    ) || voices.find(v => v.lang.includes('es') && (v.name.includes('Google') || v.name.includes('Natural'))) 
+      || voices.find(v => v.lang.startsWith('es'));
+
+    if (naturalVoice) utterance.voice = naturalVoice;
+    utterance.lang = 'es-ES';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+
+    utterance.onend = () => {
+      isSpeaking.current = false;
+      setTimeout(processQueue, 500); // Pequeña pausa entre mensajes
+    };
+
+    utterance.onerror = () => {
+      isSpeaking.current = false;
+      processQueue();
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  /** Narrador de voz (TTS) */
+  const speakText = useCallback((text: string) => {
+    if (!('speechSynthesis' in window)) return;
+    speechQueue.current.push(text);
+    processQueue();
+  }, [processQueue]);
+
+  const speakNewOrder = useCallback((pedido: any) => {
+    const beneficiario = pedido.beneficiario || 'un cliente';
+    let detalleTxt = '';
+    
+    // Extraer qué es el pedido
+    if (pedido.detalle?.items) {
+      detalleTxt = pedido.detalle.items.map((it: any) => {
+        const cant = it.cantidad > 1 ? `${it.cantidad} ` : '';
+        let desc = `${cant}${it.proteina}`;
+        
+        // Media Sopa
+        if (it.mediaSopa) desc += ' con media sopa';
+        else if (it.sopa) desc += ` con ${it.sopa}`;
+
+        // Si es Solo Sopa y tiene Arroz, decirlo
+        const acc = it.acompanamientos || [];
+        if (it.proteina === 'Solo Sopa' && acc.includes('Arroz')) {
+          desc += ' con Arroz';
+        }
+        
+        // Solo Arroz y Ensalada son "notables" si faltan, ignoramos Papa/Patacón en voz
+        const faltantes = [];
+        if (it.tipoPlato !== 'arroz' && it.tipoPlato !== 'snack' && it.proteina !== 'Solo Sopa') {
+          if (!acc.includes('Arroz')) faltantes.push('Arroz');
+          if (!acc.includes('Ensalada')) faltantes.push('Ensalada');
+        }
+        
+        if (faltantes.length > 0) desc += ` sin ${faltantes.join(' ni ')}`;
+        return desc;
+      }).join(', ');
+    } else {
+      detalleTxt = pedido.detalle?.proteina || 'un producto';
+      if (pedido.detalle?.mediaSopa) detalleTxt += ' con media sopa';
+    }
+
+    speakText(`Nuevo pedido para ${beneficiario}: ${detalleTxt}`);
+  }, [speakText]);
+
   /**
    * Cuando llega un nuevo pedido (desde Supabase Realtime en el browser abierto):
    * - Muestra notificación nativa via SW (si está registrado)
    * - Emite el beep de audio como respaldo inmediato
    */
   const notifyNewOrder = useCallback((titulo: string, cuerpo: string) => {
-    // 1. Intentar sonido siempre
-    playBeep();
+    // 1. Intentar sonido triple (más fuerte/largo)
+    playTripleBeep();
+    
+    // 2. Narrar el pedido
+    // speakText(cuerpo); // This line is replaced by speakNewOrder in the return statement
 
     // 2. Notificación local si tenemos permiso
     if (permissionRef.current === 'granted') {
@@ -187,7 +299,7 @@ export function useKitchenNotifications() {
         console.error('Error al mostrar notificación local:', e);
       }
     }
-  }, [playBeep]);
+  }, [playTripleBeep]); // Changed dependency from playBeep to playTripleBeep
 
-  return { permission, requestPermission, playBeep, notifyNewOrder };
+  return { permission, requestPermission, playBeep, playTripleBeep, speakText, speakNewOrder, notifyNewOrder };
 }

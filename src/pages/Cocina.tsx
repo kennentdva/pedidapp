@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2, PenLine, Bell, BellOff } from 'lucide-react';
+import { ChefHat, Check, Clock, Flame, UtensilsCrossed, Trash2, Edit2, PenLine, Bell, BellOff, ChevronDown, ChevronRight, Soup } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
 import { useNavigate } from 'react-router-dom';
 import { useKitchenNotifications } from '../hooks/useKitchenNotifications';
@@ -13,7 +13,7 @@ export default function Cocina() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [fechaFiltro, setFechaFiltro] = useState<string>(getColombiaDateString());
-  const { permission, requestPermission, notifyNewOrder } = useKitchenNotifications();
+  const { permission, requestPermission, notifyNewOrder, playTripleBeep, speakText, speakNewOrder } = useKitchenNotifications();
   const [toastNotificacion, setToastNotificacion] = useState<{ id: string, titulo: string, msj: string } | null>(null);
 
   const fetchPedidos = async () => {
@@ -35,6 +35,7 @@ export default function Cocina() {
           setPedidos(prev => [nuevo, ...prev]);
           const msj = `${nuevo.beneficiario || 'Cliente'} — ${(nuevo.detalle as any)?.items ? (nuevo.detalle as any).items.length + ' ítems' : nuevo.detalle?.proteina ?? ''}`;
           notifyNewOrder('🍽️ Nuevo Pedido', msj);
+          speakNewOrder(nuevo); // Solo narra el nuevo pedido
           setToastNotificacion({ id: Date.now().toString(), titulo: '🍽️ Nuevo Pedido', msj });
           setTimeout(() => setToastNotificacion(null), 5000); // Ocultar después de 5s
         }
@@ -43,6 +44,7 @@ export default function Cocina() {
       }).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [fechaFiltro, notifyNewOrder]);
+
 
   const actualizarEstadoCocina = async (id: string, nuevoEstado: 'pendiente' | 'empacado') => {
     setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado_cocina: nuevoEstado } : p));
@@ -101,7 +103,8 @@ export default function Cocina() {
       tipoPlato: p.detalle?.tipoPlato,
       valor: p.valor,
       cantidad: 1,
-      completado: p.estado_cocina === 'empacado'
+      completado: p.estado_cocina === 'empacado',
+      mediaSopa: p.detalle?.mediaSopa
     }];
   };
 
@@ -129,7 +132,10 @@ export default function Cocina() {
       const s = item?.sopa;
       const cant = item?.cantidad || 1;
       const isCompletado = item?.completado === true;
-      if (s && !isCompletado) acc[s] = (acc[s] || 0) + cant;
+      if (s && !isCompletado) {
+        const key = item.mediaSopa ? `Media ${s}` : s;
+        acc[key] = (acc[key] || 0) + cant;
+      }
     });
     return acc;
   }, {} as Record<string, number>);
@@ -139,14 +145,9 @@ export default function Cocina() {
       if (item?.tipoPlato === 'arroz' && item?.completado !== true) {
         const proteinaStr = item.proteina || '';
         const cantidad = item.cantidad || 1;
-        
-        // Extraer tamaño (ej: " pequeña" o " grande")
         const sizeMatch = proteinaStr.match(/\s+(pequeña|grande)$/i);
         const tamaño = sizeMatch ? sizeMatch[1].toLowerCase() : 'pequeña';
-        
-        // Nombre base del arroz (sin cantidad ni tamaño)
         const nombre = proteinaStr.replace(/^\d+x\s+/i, '').replace(/\s+(pequeña|grande)$/i, '').trim();
-
         if (nombre) {
           if (!acc[nombre]) acc[nombre] = { total: 0, pequeña: 0, grande: 0 };
           acc[nombre].total += cantidad;
@@ -158,8 +159,36 @@ export default function Cocina() {
     return acc;
   }, {} as Record<string, { total: number, pequeña: number, grande: number }>);
 
-  const totalSopas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.sopa) acc += (it.cantidad || 1); }); return acc; }, 0);
-  const totalProteinas = pedidos.reduce((acc, p) => { getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack') acc += (it.cantidad || 1); }); return acc; }, 0);
+  // NUEVO: Resumen de Media Sopa
+  const resumenMediaSopa = pedidosPendientes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      if (item.mediaSopa && !item.completado && item.sopa) {
+        acc[item.sopa] = (acc[item.sopa] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  // NUEVO: Resumen de Solo Sopa con Arroz
+  const resumenSoloSopaArroz = pedidosPendientes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      if (item.proteina === 'Solo Sopa' && item.acompanamientos?.includes('Arroz') && !item.completado) {
+        acc['Solo Sopa con Arroz'] = (acc['Solo Sopa con Arroz'] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalSopas = pedidos.reduce((acc, p) => { 
+    if (p.estado_cocina === 'empacado') return acc;
+    getItems(p).forEach(it => { if (it?.sopa && !it.completado) acc += (it.cantidad || 1); }); 
+    return acc; 
+  }, 0);
+  const totalProteinas = pedidos.reduce((acc, p) => { 
+    if (p.estado_cocina === 'empacado') return acc;
+    getItems(p).forEach(it => { if (it?.proteina && it?.proteina !== 'Solo Sopa' && it?.tipoPlato !== 'arroz' && it?.tipoPlato !== 'snack' && !it.completado) acc += (it.cantidad || 1); }); 
+    return acc; 
+  }, 0);
   
   // Total de arroces (sumando cantidades reales)
   const totalArroces = pedidos.reduce((acc, p) => { 
@@ -171,7 +200,96 @@ export default function Cocina() {
     return acc; 
   }, 0);
 
-  const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
+  // Helper para saber si un plato está completo
+  const getEstadoPlato = (item: any) => {
+    if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack' || item.proteina === 'Solo Sopa') return { completa: true, faltantes: [] };
+    
+    const acc = item.acompanamientos || [];
+    const faltantes = [];
+    if (!acc.includes('Arroz')) faltantes.push('Arroz');
+    if (!acc.includes('Ensalada')) faltantes.push('Ensalada');
+    
+    // El "Príncipe" (Acompañamiento adicional como papa, patacón, etc)
+    const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
+    if (!tienePrincipe) faltantes.push('Acompañamiento (Papa/Patacón)');
+
+    return { completa: faltantes.length === 0, faltantes };
+  };
+
+  const resumenEspeciales = pedidosPendientes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      const { completa, faltantes } = getEstadoPlato(item);
+      if (!completa) {
+        const desc = `${item.proteina} sin ${faltantes.join(' ni ')}`;
+        acc[desc] = (acc[desc] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalEspeciales = Object.values(resumenEspeciales).reduce((a, b) => a + b, 0);
+  const realesCompletos = pedidosPendientes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      const { completa } = getEstadoPlato(item);
+      if (completa && item.proteina && item.proteina !== 'Solo Sopa' && item.tipoPlato !== 'arroz' && item.tipoPlato !== 'snack') acc += item.cantidad || 1;
+    });
+    return acc;
+  }, 0);
+
+
+  // Función para narrar el resumen detallado
+  const narrarResumenDetallado = () => {
+    if (pedidosPendientes.length === 0) {
+      speakText("Todo está al día. No hay pedidos pendientes.");
+      return;
+    }
+
+    let texto = `Resumen de cocina. Tienes ${pedidosPendientes.length} pedidos pendientes. `;
+    
+    // Sopas
+    const sops = Object.entries(resumenSopas);
+    if (sops.length > 0) {
+      texto += `Tenemos ${totalSopas} sopas: ${sops.map(([s, c]) => `${c} ${s}`).join(', ')}. `;
+    }
+
+    // Arroces
+    const arros = Object.entries(resumenArroz);
+    const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
+    if (arros.length > 0) {
+      texto += `También tenemos ${totalArrocesPendientes} arroces especiales: ${arros.map(([n, i]) => `${n} (${i.pequeña} pequeñas y ${i.grande} grandes)`).join(', ')}. `;
+    }
+
+    if (realesCompletos > 0) {
+      texto += `De platos normales completos tenemos ${realesCompletos}. `;
+    }
+
+    if (totalEspeciales > 0) {
+      // Filtrar especiales para NO decir los de Papa/Patacón si es molesto
+      const detallesImportantes = Object.entries(resumenEspeciales)
+        .filter(([desc]) => !desc.includes('Papa') && !desc.includes('Patacón')) // Excluir papas/patacon de la voz
+        .map(([desc, cant]) => {
+          // Si es Solo Sopa con Arroz, decirlo más natural
+          if (desc.includes('Solo Sopa') && desc.includes('Arroz')) return `${cant} Solo Sopa con Arroz`;
+          return `${cant} ${desc}`;
+        });
+
+      if (detallesImportantes.length > 0) {
+        texto += `atención especial para: ${detallesImportantes.join(', ')}. `;
+      }
+    }
+
+    speakText(texto);
+  };
+
+  // Recordatorio periódico (cada 1 minuto para pruebas)
+  useEffect(() => {
+    const INTERVAL_MS = 1 * 60 * 1000; // 1 minuto (temporal para pruebas)
+    const interval = setInterval(() => {
+      narrarResumenDetallado();
+    }, INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [pedidos, speakText, totalHoy, resumenProteinas, resumenSopas, resumenArroz, pedidosPendientes, resumenEspeciales, realesCompletos]);
 
   return (
     <div className="flex flex-col h-full p-2 md:p-6 text-neutral-100 gap-6">
@@ -183,7 +301,7 @@ export default function Cocina() {
             <span className="text-xl font-black text-orange-400">{totalProteinas}</span>
          </div>
          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
-            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Sopas</span>
+            <span className="text-[10px] uppercase font-bold text-neutral-500 mb-1">Sopas (Pendientes)</span>
             <span className="text-xl font-black text-amber-500">{totalSopas}</span>
          </div>
          <div className="bg-yellow-950/30 border border-yellow-900/50 rounded-2xl p-3 shadow flex flex-col items-center justify-center text-center">
@@ -207,57 +325,72 @@ export default function Cocina() {
          </div>
       </div>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 w-full border-b border-neutral-800 pb-4">
-        {/* Proteínas pendientes */}
-        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Proteínas por Salir</span>
-           <div className="grid grid-cols-2 gap-2 flex-1">
-             {Object.entries(resumenProteinas).map(([prot, cant]) => (
-               <div key={prot} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
-                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{prot}</span>
-                 <span className="text-lg font-black text-orange-400">{cant}</span>
+      <div className="flex flex-col gap-4">
+        <Accordion title="1. Proteínas Pendientes" icon={<UtensilsCrossed size={16}/>} count={Object.values(resumenProteinas).reduce((a,b)=>a+b,0)}>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+            {Object.entries(resumenProteinas).map(([prot, cant]) => (
+              <div key={prot} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl">
+                <span className="text-xs font-bold text-neutral-400">{prot}</span>
+                <span className="text-sm font-black text-orange-400">{cant}</span>
+              </div>
+            ))}
+          </div>
+        </Accordion>
+
+        <Accordion title="2. Sopas (Enteras)" icon={<Soup size={16}/>} count={Object.entries(resumenSopas).filter(([k]) => !k.startsWith('Media')).reduce((a,b)=>a+b[1],0)}>
+           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+             {Object.entries(resumenSopas).filter(([k]) => !k.startsWith('Media')).map(([sopa, cant]) => (
+               <div key={sopa} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400">{sopa}</span>
+                 <span className="text-sm font-black text-amber-500">{cant}</span>
                </div>
              ))}
-             {Object.keys(resumenProteinas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Todo listo 🏆</span>}
            </div>
-        </div>
+        </Accordion>
 
-        {/* Sopas pendientes */}
-        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Sopas Pendientes</span>
-           <div className="grid grid-cols-2 gap-2 flex-1">
-             {Object.entries(resumenSopas).map(([sopa, cant]) => (
-               <div key={sopa} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
-                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{sopa}</span>
-                 <span className="text-lg font-black text-amber-500">{cant}</span>
+        <Accordion title="3. MEDIA SOPA 🥣" icon={<Soup size={16}/>} count={Object.values(resumenMediaSopa).reduce((a,b)=>a+b,0)} color="amber">
+           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+             {Object.entries(resumenMediaSopa).map(([sopa, cant]) => (
+               <div key={sopa} className="flex justify-between items-center bg-amber-950/20 border border-amber-900/40 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-amber-500">{sopa}</span>
+                 <span className="text-sm font-black text-white">{cant}</span>
                </div>
              ))}
-             {Object.keys(resumenSopas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Sin sopas pend. 🥣</span>}
            </div>
-        </div>
+        </Accordion>
 
-        {/* Arroces pendientes */}
-        <div className="bg-yellow-950/10 backdrop-blur-md border border-yellow-900/30 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-yellow-500/50 mb-3 text-center w-full tracking-widest">Arroces Pendientes ({totalArrocesPendientes})</span>
-           <div className="flex flex-wrap gap-2 justify-center">
+        <Accordion title="4. SOLO SOPA CON ARROZ 🍚" icon={<Check size={16}/>} count={resumenSoloSopaArroz['Solo Sopa con Arroz'] || 0} color="blue">
+           <div className="p-4 bg-blue-950/20 border border-blue-900/40 rounded-2xl flex justify-between items-center">
+             <span className="text-sm font-bold text-blue-400 uppercase tracking-widest italic">Combinación Especial de Sopa y Arroz</span>
+             <span className="text-3xl font-black text-white">{resumenSoloSopaArroz['Solo Sopa con Arroz'] || 0}</span>
+           </div>
+        </Accordion>
+
+        <Accordion title="5. Arroces Especiales" icon={<UtensilsCrossed size={16}/>} count={Object.values(resumenArroz).reduce((a,b)=>a+b.total,0)} color="yellow">
+           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
              {Object.entries(resumenArroz).map(([nombre, info]) => (
-               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl border border-yellow-900/20">
-                 <span className="text-xs text-neutral-400 mb-1">{nombre}</span>
+               <div key={nombre} className="bg-yellow-950/20 border border-yellow-900/30 p-3 rounded-2xl flex flex-col items-center">
+                 <span className="text-xs font-bold text-yellow-500 mb-1">{nombre}</span>
                  <div className="flex gap-4">
-                    <div className="flex flex-col items-center">
-                        <span className="text-[10px] font-black text-yellow-500">{info.pequeña}</span>
-                        <span className="text-[8px] uppercase text-neutral-600">P</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                        <span className="text-[10px] font-black text-orange-500">{info.grande}</span>
-                        <span className="text-[8px] uppercase text-neutral-600">G</span>
-                    </div>
+                   <div className="text-center"><span className="text-[10px] block text-neutral-500">PEQ</span><span className="font-bold text-white">{info.pequeña}</span></div>
+                   <div className="text-center"><span className="text-[10px] block text-neutral-500">GRA</span><span className="font-bold text-white">{info.grande}</span></div>
                  </div>
                </div>
              ))}
-             {Object.keys(resumenArroz).length === 0 && <span className="text-center text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
            </div>
-        </div>
+        </Accordion>
+
+        <Accordion title={`6. Platos Especiales / Sin Algo (${totalEspeciales})`} icon={<BellOff size={16}/>} count={totalEspeciales} color="red">
+           <div className="flex flex-col gap-2">
+              {Object.entries(resumenEspeciales).map(([desc, cant]) => (
+                <div key={desc} className="bg-red-950/30 border border-red-900/40 px-3 py-2 rounded-xl flex justify-between items-center">
+                  <span className="text-xs font-bold text-red-300">{desc}</span>
+                  <span className="text-lg font-black text-white">{cant}</span>
+                </div>
+              ))}
+              {totalEspeciales === 0 && <span className="text-xs text-neutral-500 italic">No hay pedidos especiales</span>}
+           </div>
+        </Accordion>
       </div>
 
       <div className="flex items-center justify-between mb-2 px-2 mt-2">
@@ -283,13 +416,26 @@ export default function Cocina() {
              }`}
            >
              {permission === 'granted' ? <Bell size={16} /> : <BellOff size={16} />}
-             <span className="hidden md:block">
-               {permission === 'granted' ? 'Notificaciones ON'
-                : permission === 'denied' ? 'Bloqueadas'
-                : permission === 'unsupported' ? 'No soportado'
-                : 'Activar Alertas'}
-             </span>
-           </button>
+              <span className="hidden md:block">
+                {permission === 'granted' ? 'Notificaciones ON'
+                 : permission === 'denied' ? 'Bloqueadas'
+                 : permission === 'unsupported' ? 'No soportado'
+                 : 'Activar Alertas'}
+              </span>
+            </button>
+            
+            {/* Prueba de Sonido/Voz */}
+            <button
+              onClick={() => {
+                playTripleBeep();
+                setTimeout(() => narrarResumenDetallado(), 1000);
+              }}
+              className="p-2 rounded-xl border border-neutral-700 bg-neutral-800 text-neutral-400 hover:text-white transition-colors flex items-center gap-2"
+              title="Probar Resumen de Voz"
+            >
+              <UtensilsCrossed size={16} />
+              <span className="text-[10px] font-bold">PROBAR RESUMEN</span>
+            </button>
            {/* Date filter */}
            <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-xl">
              <span className="text-neutral-500 text-sm hidden md:block">Fecha:</span>
@@ -340,21 +486,46 @@ export default function Cocina() {
                     <div className="space-y-2">
                       {((p.detalle as any).items as any[]).map((item: any, idx: number) => {
                         const isDone = item.completado;
+                        const isSoloSopaArroz = item.proteina === 'Solo Sopa' && item.acompanamientos?.includes('Arroz');
                         return (
                           <div 
                             key={idx} 
                             onClick={() => toggleItemCompletado(p, idx)}
-                            className={`rounded-xl p-2 border cursor-pointer transition-all ${isDone ? 'bg-emerald-900/20 border-emerald-500/30 opacity-60' : 'bg-neutral-950 border-neutral-800 hover:border-neutral-600'}`}
+                            className={`rounded-xl p-2 border cursor-pointer transition-all ${isDone ? 'bg-emerald-900/20 border-emerald-500/30 opacity-60' : isSoloSopaArroz ? 'bg-blue-900/20 border-blue-500/50 shadow-lg shadow-blue-500/10' : 'bg-neutral-950 border-neutral-800 hover:border-neutral-600'}`}
                           >
                             <p className={`flex justify-between text-sm ${isDone ? 'line-through text-neutral-500' : ''}`}>
                               <span className="text-neutral-500">{item.tipoPlato === 'arroz' ? '🍚' : item.tipoPlato === 'snack' ? '🍦' : '🍗'}</span>
-                              <span className="font-bold text-white text-right">
+                              <span className={`font-bold text-right ${isSoloSopaArroz ? 'text-blue-400' : 'text-white'}`}>
                                 {(item.cantidad || 1) > 1 && <span className="text-orange-400 mr-1">{item.cantidad}x</span>}
                                 {item.proteina}
                               </span>
                             </p>
-                            {item.sopa && <p className={`text-xs text-orange-400 text-right mt-0.5 ${isDone ? 'line-through opacity-50' : ''}`}>🍲 {item.sopa}</p>}
+                            {isSoloSopaArroz && !isDone && (
+                              <div className="text-[10px] font-black text-blue-400 text-right uppercase tracking-tighter mt-1 italic animate-pulse">
+                                ⭐ COMBO SOPA Y ARROZ
+                              </div>
+                            )}
+                            {item.sopa && (
+                              <p className={`text-xs text-orange-400 text-right mt-0.5 ${isDone ? 'line-through opacity-50' : ''}`}>
+                                🍲 {item.mediaSopa ? 'Media ' : ''}{item.sopa}
+                              </p>
+                            )}
                             {item.acompanamientos?.length > 0 && <p className={`text-xs text-neutral-500 text-right ${isDone ? 'line-through opacity-50' : ''}`}>{item.acompanamientos.join(', ')}</p>}
+                            
+                            {/* Alertas de platos completos vs especiales */}
+                            {(() => {
+                              const { completa, faltantes } = getEstadoPlato(item);
+                              if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack' || item.proteina === 'Solo Sopa') return null;
+                              if (completa) return <div className="flex justify-end mt-1"><span className="text-[9px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded">PLATO COMPLETO ✅</span></div>;
+                              return (
+                                <div className="flex flex-wrap gap-1 justify-end mt-1">
+                                  {faltantes.map(f => (
+                                    <span key={f} className="text-[9px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded animate-pulse">SIN {f.toUpperCase()} 🚫</span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                            
                             {item.nota && <p className="text-xs text-yellow-400 italic mt-1">⚠️ {item.nota}</p>}
                           </div>
                         );
@@ -402,6 +573,49 @@ export default function Cocina() {
             <p className="text-emerald-100 mt-1 font-medium">{toastNotificacion.msj}</p>
           </div>
           <button onClick={() => setToastNotificacion(null)} className="text-emerald-500 hover:text-white p-1 ml-2"><Trash2 size={16}/></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Accordion({ title, icon, count, children, color = 'neutral' }: { title: string, icon: React.ReactNode, count: number, children: React.ReactNode, color?: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  const colors: Record<string, string> = {
+    neutral: 'bg-neutral-900 border-neutral-800',
+    amber: 'bg-amber-950/10 border-amber-900/30',
+    yellow: 'bg-yellow-950/10 border-yellow-900/30',
+    blue: 'bg-blue-950/10 border-blue-900/30',
+    red: 'bg-red-950/10 border-red-900/20',
+  };
+
+  const textColors: Record<string, string> = {
+    neutral: 'text-neutral-400',
+    amber: 'text-amber-500',
+    yellow: 'text-yellow-500',
+    blue: 'text-blue-400',
+    red: 'text-red-400',
+  };
+
+  return (
+    <div className={`rounded-3xl border overflow-hidden transition-all duration-300 ${colors[color]} ${isOpen ? 'shadow-2xl' : 'shadow-lg mb-2'}`}>
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+      >
+        <div className="flex items-center gap-4">
+          <div className={`p-2 rounded-xl bg-black/40 ${textColors[color]}`}>{icon}</div>
+          <h4 className={`font-black text-sm uppercase tracking-widest ${textColors[color]}`}>{title}</h4>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-xl font-black text-white">{count}</span>
+          {isOpen ? <ChevronDown className="text-neutral-600" size={20} /> : <ChevronRight className="text-neutral-600" size={20} />}
+        </div>
+      </button>
+      {isOpen && (
+        <div className="px-6 pb-6 pt-2 animate-in slide-in-from-top-2 duration-300">
+          {children}
         </div>
       )}
     </div>

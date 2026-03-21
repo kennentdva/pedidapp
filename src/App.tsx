@@ -12,10 +12,14 @@ import Estado from './pages/Estado';
 import Login from './pages/Login';
 import { useOrderStore } from './store/orderStore';
 import { ThemeProvider } from './lib/ThemeContext';
+import { Download } from 'lucide-react';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
 
   useEffect(() => {
     // Si ya hay sesión guardada de antes
@@ -25,7 +29,32 @@ function App() {
       useOrderStore.getState().fetchMenuConfig();
     }
     setLoading(false);
+
+    // Lógica de Instalación PWA
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      // Mostrar botón si es Android o móvil
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      if (isAndroid) {
+        setShowInstallBtn(true);
+      }
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      console.log('PWA instalada con éxito');
+      setShowInstallBtn(false);
+    }
+    setDeferredPrompt(null);
+  };
 
   if (loading) return null; // Evitar pantallazos
 
@@ -55,6 +84,17 @@ function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      
+      {/* Botón flotante de Instalación PWA (Solo Android/Móvil si no está instalada) */}
+      {showInstallBtn && (
+        <button
+          onClick={handleInstallClick}
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[60] bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-full shadow-2xl flex items-center gap-2 animate-bounce border-2 border-indigo-400"
+        >
+          <Download size={20} />
+          Instalar Aplicación
+        </button>
+      )}
     </ThemeProvider>
   );
 }

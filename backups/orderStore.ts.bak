@@ -18,7 +18,6 @@ export type ItemPedido = {
   valor: number;
   cantidad: number;
   completado?: boolean;
-  mediaSopa?: boolean;
 };
 
 export type PedidoDetalle = {
@@ -30,7 +29,6 @@ export type PedidoDetalle = {
   tipoPlato?: 'normal' | 'snack' | 'arroz';
   // Multi-item: cuando hay más de una comida en el mismo pedido
   items?: ItemPedido[];
-  mediaSopa?: boolean;
 };
 
 export type Pedido = {
@@ -58,8 +56,6 @@ export type MenuConfig = {
   extras: { nombre: string, precio: number }[];
   snacks: { nombre: string, precio: number, desc?: string }[];
   arrozEspeciales: ArrozEspecialItem[];
-  preciosProteinas: Record<string, number>;
-  precioSopaAdicional: number;
   menuDia?: {
     activo: boolean;
     titulo: string;
@@ -83,12 +79,10 @@ interface OrderState {
   setProteina: (p: string | null) => void;
   toggleAcompanamiento: (a: string) => void;
   setSopa: (s: string | null) => void;
-  toggleMediaSopa: () => void;
   toggleExtra: (e: string, precio: number) => void;
   setValorBase: (v: number) => void;
   setSnackDirecto: (snackName: string, precio: number) => void;
   setArrozEspecial: (nombre: string, precio: number) => void;
-  setPlatoCompleto: () => void;
   addItemAlCarrito: () => void;
   removeItemDelCarrito: (index: number) => void;
   fetchMenuConfig: () => Promise<void>;
@@ -108,8 +102,7 @@ const initialState = {
     proteina: null,
     acompanamientos: [],
     sopa: null,
-    extras: [],
-    mediaSopa: false
+    extras: []
   },
   valorBase: 0,
   precioManual: false,
@@ -134,18 +127,9 @@ const defaultMenuConfig: MenuConfig = {
   ],
   arrozEspeciales: [
     { nombre: 'Arroz Trifásico', precioSmall: 5000, precioLarge: 10000 },
-    { nombre: 'Arroz con Pollo', precioSmall: 5000, precioLarge: 10000 },
     { nombre: 'Arroz Cubano', precioSmall: 5000, precioLarge: 10000 },
+    { nombre: 'Arroz con Pollo', precioSmall: 5000, precioLarge: 10000 },
   ],
-  preciosProteinas: {
-    'Pechuga': 13000,
-    'Alitas': 13000,
-    'Cerdo': 13000,
-    'Res': 13000,
-    'Pescado': 15000,
-    'Solo Sopa': 4000
-  },
-  precioSopaAdicional: 2000,
   menuDia: { activo: false, titulo: '', descripcion: '', precio: undefined }
 };
 
@@ -163,31 +147,28 @@ if (!initialMenuConfig.snacks) {
 if (!initialMenuConfig.arrozEspeciales) {
   initialMenuConfig.arrozEspeciales = defaultMenuConfig.arrozEspeciales;
 }
-if (!initialMenuConfig.preciosProteinas) {
-  initialMenuConfig.preciosProteinas = defaultMenuConfig.preciosProteinas;
-}
-if (initialMenuConfig.precioSopaAdicional === undefined) {
-  initialMenuConfig.precioSopaAdicional = defaultMenuConfig.precioSopaAdicional;
-}
 
-const calcularPrecio = (proteina: string | null, sopa: string | null, acompanamientos: string[], manualPrice: boolean, currentValor: number, config: MenuConfig) => {
-  if (manualPrice) return currentValor;
-  
+const calcularPrecio = (proteina: string | null, sopa: string | null, acompanamientos: string[], manualPrice: boolean, currentValor: number) => {
+  if (manualPrice) return currentValor; // Si el usuario editó el precio, no se recalcula automático
   if (proteina === 'Solo Sopa' || (!proteina && sopa)) {
-     const base = config.preciosProteinas['Solo Sopa'] || 4000;
-     if (acompanamientos.includes('Arroz')) return base * 2; // Ejemplo: 8000
-     return base;
+     if (acompanamientos.includes('Arroz')) return 8000;
+     return 4000;
   }
   
-  // Arroces Especiales (mantienen su lógica o podrías sacarlos a config también)
-  if (proteina?.includes('Pequeño')) return sopa ? 8000 : 5000;
-  if (proteina?.includes('Mediano') || proteina?.includes('Grande')) return sopa ? 13000 : 10000;
-
-  // Lógica dinámica con config
-  const precioBase = config.preciosProteinas[proteina || ''] || 13000;
-  const precioSopa = sopa ? (config.precioSopaAdicional ?? 2000) : 0;
+  // Lógica para Arroces Especiales Pequeños
+  if (proteina === 'Arroz con Pollo Pequeño' || proteina === 'Arroz Cubano Pequeño') {
+     return sopa ? 8000 : 5000; // 5.000 + 3.000 sopa
+  }
   
-  return precioBase + precioSopa;
+  // Lógica para Arroces Especiales Medianos/Grandes
+  if (proteina === 'Arroz con Pollo Mediano' || proteina === 'Arroz Cubano Mediano') {
+     return sopa ? 13000 : 10000; // 10.000 + 3.000 sopa
+  }
+
+  // Precios estandar
+  if (proteina && sopa) return 15000;
+  if (proteina && !sopa) return 13000;
+  return 0;
 };
 
 export const MENU_CONFIG_ID = '66666666-6666-6666-6666-666666666666';
@@ -208,7 +189,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
      
      return { 
        precioManual: false,
-       valorBase: calcularPrecio(p, sopa, state.detalle.acompanamientos, false, 0, state.menuConfig),
+       valorBase: calcularPrecio(p, sopa, state.detalle.acompanamientos, false, 0) + state.detalle.extras.reduce((acc: number) => acc + 0, 0), // Ajustar extras si son dinámicos luego
        detalle: { ...state.detalle, proteina: p, sopa } 
      };
   }),
@@ -218,19 +199,18 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     const newArr = arr.includes(a) ? arr.filter(x => x !== a) : [...arr, a];
     return {
       precioManual: false,
-      valorBase: calcularPrecio(state.detalle.proteina, state.detalle.sopa, newArr, false, 0, state.menuConfig),
-      detalle: { ...state.detalle, acompanamientos: newArr }
+      valorBase: calcularPrecio(state.detalle.proteina, state.detalle.sopa, newArr, false, 0),
+      detalle: {
+        ...state.detalle,
+        acompanamientos: newArr
+      }
     };
   }),
   
   setSopa: (s) => set((state) => ({ 
     precioManual: false,
-    valorBase: calcularPrecio(state.detalle.proteina, s, state.detalle.acompanamientos, false, 0, state.menuConfig),
+    valorBase: calcularPrecio(state.detalle.proteina, s, state.detalle.acompanamientos, false, 0),
     detalle: { ...state.detalle, sopa: s } 
-  })),
-
-  toggleMediaSopa: () => set((state) => ({
-    detalle: { ...state.detalle, mediaSopa: !state.detalle.mediaSopa }
   })),
   
   toggleExtra: (e, precio) => set((state) => {
@@ -260,15 +240,6 @@ export const useOrderStore = create<OrderState>((set, get) => ({
      detalle: { proteina: nombre, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'arroz' }
   }),
 
-  setPlatoCompleto: () => set((state) => {
-    const defaultAcc = ['Arroz', 'Ensalada', 'Patacón'];
-    return {
-      precioManual: false,
-      valorBase: calcularPrecio(state.detalle.proteina, state.detalle.sopa, defaultAcc, false, 0, state.menuConfig),
-      detalle: { ...state.detalle, acompanamientos: defaultAcc }
-    };
-  }),
-
   addItemAlCarrito: () => set((state) => {
     if (!state.detalle.proteina) return state;
     const newItem: ItemPedido = {
@@ -281,7 +252,6 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       valor: state.valorBase,
       cantidad: 1,
       completado: false,
-      mediaSopa: state.detalle.mediaSopa
     };
 
     // Agrupación automática: buscar si ya existe un ítem idéntico
@@ -291,8 +261,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       i.sopa === newItem.sopa &&
       JSON.stringify(i.extras.sort()) === JSON.stringify(newItem.extras.sort()) &&
       i.nota === newItem.nota &&
-      i.tipoPlato === newItem.tipoPlato &&
-      i.mediaSopa === newItem.mediaSopa
+      i.tipoPlato === newItem.tipoPlato
     );
 
     if (existingIndex !== -1) {
@@ -304,7 +273,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       };
       return {
         carrito: newCarrito,
-        detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+        detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
         valorBase: 0,
         precioManual: false,
       };
@@ -312,7 +281,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
     return {
       carrito: [...state.carrito, newItem],
-      detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+      detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
       valorBase: 0,
       precioManual: false,
     };
@@ -375,7 +344,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     responsable: null,
     beneficiario: '',
     carrito: [],
-    detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+    detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] },
     valorBase: 0,
     precioManual: false,
     editingPedidoId: null
