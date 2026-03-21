@@ -232,7 +232,7 @@ export default function Ventas() {
         {/* TAB: Restaurante */}
         {activeTab === 'Restaurante' && (
           <div>
-            <div className="mb-8"><h3 className="text-sm font-semibold text-neutral-400 mb-3 uppercase tracking-wider">1. Proteína</h3><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{store.menuConfig.proteinas.map((p: string) => (<button key={p} onClick={() => store.setProteina(p)} className={`py-4 px-2 rounded-2xl text-lg font-medium transition-all active:scale-95 border-2 ${store.detalle.proteina === p && !store.detalle.tipoPlato ? 'bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-500/30' : 'bg-neutral-800 border-transparent text-neutral-300 hover:bg-neutral-700'}`}>{p}</button>))}</div></div>
+            <div className="mb-8"><h3 className="text-sm font-semibold text-neutral-400 mb-3 uppercase tracking-wider">1. Proteína</h3><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{store.menuConfig.proteinas.map((p: string) => (<button key={p} onClick={() => { store.setProteina(p); if (p !== 'Solo Sopa') store.setPlatoCompleto(); }} className={`py-4 px-2 rounded-2xl text-lg font-medium transition-all active:scale-95 border-2 ${store.detalle.proteina === p && !store.detalle.tipoPlato ? 'bg-orange-500 border-orange-500 text-white shadow-lg shadow-orange-500/30' : 'bg-neutral-800 border-transparent text-neutral-300 hover:bg-neutral-700'}`}>{p}</button>))}</div></div>
             <div className="mb-8 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider">2. Acompañamientos</h3>
               <button 

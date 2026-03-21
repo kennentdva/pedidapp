@@ -185,6 +185,7 @@ export function useKitchenNotifications() {
 
   const speechQueue = useRef<string[]>([]);
   const isSpeaking = useRef(false);
+  const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const processQueue = useCallback(() => {
     if (isSpeaking.current || speechQueue.current.length === 0) return;
@@ -195,15 +196,17 @@ export function useKitchenNotifications() {
     isSpeaking.current = true;
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Configuración de voz...
-    // Priorizar voces femeninas ("Chica")
-    const voices = window.speechSynthesis.getVoices();
-    const naturalVoice = voices.find(v => 
-      (v.name.includes('Helena') || v.name.includes('Sabina') || v.name.includes('Lucia') || v.name.includes('Zira')) && v.lang.includes('es')
-    ) || voices.find(v => v.lang.includes('es') && (v.name.includes('Google') || v.name.includes('Natural'))) 
-      || voices.find(v => v.lang.startsWith('es'));
+    // Configuración de voz (persistente por sesión/instancia)
+    if (!selectedVoiceRef.current) {
+      const voices = window.speechSynthesis.getVoices();
+      // Priorizar voces femeninas ("Chica") conocidas
+      selectedVoiceRef.current = voices.find(v => 
+        (v.name.includes('Helena') || v.name.includes('Sabina') || v.name.includes('Lucia') || v.name.includes('Zira') || v.name.includes('Hilda') || v.name.includes('Laura')) && v.lang.includes('es')
+      ) || voices.find(v => v.lang.includes('es') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Female') || v.name.includes('Mujer'))) 
+        || voices.find(v => v.lang.startsWith('es')) || null;
+    }
 
-    if (naturalVoice) utterance.voice = naturalVoice;
+    if (selectedVoiceRef.current) utterance.voice = selectedVoiceRef.current;
     utterance.lang = 'es-ES';
     utterance.rate = 0.9;
     utterance.pitch = 1;
@@ -230,37 +233,43 @@ export function useKitchenNotifications() {
 
   const speakNewOrder = useCallback((pedido: any) => {
     const beneficiario = pedido.beneficiario || 'un cliente';
-    let detalleTxt = '';
     
-    // Extraer qué es el pedido
-    if (pedido.detalle?.items) {
-      detalleTxt = pedido.detalle.items.map((it: any) => {
-        const cant = it.cantidad > 1 ? `${it.cantidad} ` : '';
-        let desc = `${cant}${it.proteina}`;
-        
-        // Media Sopa
-        if (it.mediaSopa) desc += ' con media sopa';
-        else if (it.sopa) desc += ` con ${it.sopa}`;
+    // Helper para formatear un ítem individual
+    const formatItem = (it: any) => {
+      const cant = it.cantidad > 1 ? `${it.cantidad} ` : '';
+      let desc = `${cant}${it.proteina}`;
+      
+      // Media Sopa
+      if (it.mediaSopa) desc += ' con media sopa';
+      else if (it.sopa) desc += ` con ${it.sopa}`;
 
-        // Si es Solo Sopa y tiene Arroz, decirlo
-        const acc = it.acompanamientos || [];
-        if (it.proteina === 'Solo Sopa' && acc.includes('Arroz')) {
-          desc += ' con Arroz';
-        }
+      const acc = it.acompanamientos || [];
+      // Si es Solo Sopa y tiene Arroz, decirlo
+      if (it.proteina === 'Solo Sopa' && acc.includes('Arroz')) {
+        desc += ' con Arroz';
+      }
+      
+      // Solo Arroz y Ensalada son "notables" si faltan, ignoramos Papa/Patacón en voz
+      const faltantes = [];
+      if (it.tipoPlato !== 'arroz' && it.tipoPlato !== 'snack' && it.proteina !== 'Solo Sopa') {
+        if (!acc.includes('Arroz')) faltantes.push('Arroz');
+        if (!acc.includes('Ensalada')) faltantes.push('Ensalada');
         
-        // Solo Arroz y Ensalada son "notables" si faltan, ignoramos Papa/Patacón en voz
-        const faltantes = [];
-        if (it.tipoPlato !== 'arroz' && it.tipoPlato !== 'snack' && it.proteina !== 'Solo Sopa') {
-          if (!acc.includes('Arroz')) faltantes.push('Arroz');
-          if (!acc.includes('Ensalada')) faltantes.push('Ensalada');
-        }
-        
-        if (faltantes.length > 0) desc += ` sin ${faltantes.join(' ni ')}`;
-        return desc;
-      }).join(', ');
+        // El acompañante frito (Príncipe)
+        const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
+        if (!tienePrincipe) faltantes.push('acompañante');
+      }
+      
+      if (faltantes.length > 0) desc += ` sin ${faltantes.join(' ni ')}`;
+      return desc;
+    };
+
+    let detalleTxt = '';
+    if (pedido.detalle?.items && Array.isArray(pedido.detalle.items)) {
+      detalleTxt = pedido.detalle.items.map(formatItem).join(', ');
     } else {
-      detalleTxt = pedido.detalle?.proteina || 'un producto';
-      if (pedido.detalle?.mediaSopa) detalleTxt += ' con media sopa';
+      // Fallback para pedidos simples (compatibilidad)
+      detalleTxt = formatItem(pedido.detalle);
     }
 
     speakText(`Nuevo pedido para ${beneficiario}: ${detalleTxt}`);

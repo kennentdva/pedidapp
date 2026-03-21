@@ -133,8 +133,7 @@ export default function Cocina() {
       const cant = item?.cantidad || 1;
       const isCompletado = item?.completado === true;
       if (s && !isCompletado) {
-        const key = item.mediaSopa ? `Media ${s}` : s;
-        acc[key] = (acc[key] || 0) + cant;
+        acc[s] = (acc[s] || 0) + cant;
       }
     });
     return acc;
@@ -202,18 +201,27 @@ export default function Cocina() {
 
   // Helper para saber si un plato está completo
   const getEstadoPlato = (item: any) => {
-    if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack' || item.proteina === 'Solo Sopa') return { completa: true, faltantes: [] };
+    if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack' || item.proteina === 'Solo Sopa') return { completa: true, completaBot: true, faltantes: [], faltantesBot: [] };
     
     const acc = item.acompanamientos || [];
     const faltantes = [];
-    if (!acc.includes('Arroz')) faltantes.push('Arroz');
-    if (!acc.includes('Ensalada')) faltantes.push('Ensalada');
-    
-    // El "Príncipe" (Acompañamiento adicional como papa, patacón, etc)
-    const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
-    if (!tienePrincipe) faltantes.push('Acompañamiento (Papa/Patacón)');
+    const faltantesBot = []; // Para el bot, ignoramos papa/patacón
 
-    return { completa: faltantes.length === 0, faltantes };
+    if (!acc.includes('Arroz')) { faltantes.push('Arroz'); faltantesBot.push('Arroz'); }
+    if (!acc.includes('Ensalada')) { faltantes.push('Ensalada'); faltantesBot.push('Ensalada'); }
+    
+    const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
+    if (!tienePrincipe) {
+      faltantes.push('Acompañamiento (Papa/Patacón)');
+      faltantesBot.push('acompañante');
+    }
+
+    return { 
+      completa: faltantes.length === 0, 
+      completaBot: faltantesBot.length === 0, 
+      faltantes, 
+      faltantesBot 
+    };
   };
 
   const resumenEspeciales = pedidosPendientes.reduce((acc, p) => {
@@ -244,42 +252,61 @@ export default function Cocina() {
       return;
     }
 
-    let texto = `Resumen de cocina. Tienes ${pedidosPendientes.length} pedidos pendientes. `;
+    let texto = `Resumen de cocina. `;
     
-    // Sopas
+    // 1. Sopas
     const sops = Object.entries(resumenSopas);
-    const medSops = Object.entries(resumenMediaSopa);
     if (sops.length > 0) {
-      texto += `Tenemos ${totalSopas} sopas en total: ${sops.map(([s, c]) => `${c} de ${s}`).join(', ')}. `;
-      if (medSops.length > 0) {
-        texto += `De estas, ${medSops.map(([s, c]) => `${c} son medias de ${s}`).join(' y ')}. `;
-      }
+      const parts = sops.map(([s, c]) => {
+        const medias = resumenMediaSopa[s] || 0;
+        if (medias > 0) {
+          if (medias === c) return `${c} ${c === 1 ? 'media' : 'medias'} de ${s}`;
+          return `${c} ${s} (${medias} de ${medias === 1 ? 'ella' : 'ellas'} media)`;
+        }
+        return `${c} ${s}`;
+      });
+      texto += `Tenemos ${parts.join(' y ')}. `;
     }
-
-    // Arroces
+    
+    // 2. Arroces
     const arros = Object.entries(resumenArroz);
-    const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
     if (arros.length > 0) {
-      texto += `También tenemos ${totalArrocesPendientes} arroces especiales: ${arros.map(([n, i]) => `${n} (${i.pequeña} pequeñas y ${i.grande} grandes)`).join(', ')}. `;
+      const parts = arros.map(([n, i]) => {
+        const det = [];
+        if (i.pequeña > 0) det.push(`${i.pequeña} pequeña`);
+        if (i.grande > 0) det.push(`${i.grande} grande`);
+        return `${i.total} ${n} (${det.join(' y ')})`;
+      });
+      texto += `Tenemos ${parts.join(', ')}. `;
     }
 
-    if (realesCompletos > 0) {
-      texto += `De platos normales completos tenemos ${realesCompletos}. `;
+    // 3. Proteínas (Todas las pendientes, para que no falte nada en voz)
+    const prots = Object.entries(resumenProteinas);
+    if (prots.length > 0) {
+      texto += `En platos normales hay: ${prots.map(([p, c]) => `${c} ${p}`).join(', ')}. `;
     }
 
-    if (totalEspeciales > 0) {
-      // Filtrar especiales para NO decir los de Papa/Patacón si es molesto
-      const detallesImportantes = Object.entries(resumenEspeciales)
-        .filter(([desc]) => !desc.includes('Papa') && !desc.includes('Patacón')) // Excluir papas/patacon de la voz
-        .map(([desc, cant]) => {
-          // Si es Solo Sopa con Arroz, decirlo más natural
-          if (desc.includes('Solo Sopa') && desc.includes('Arroz')) return `${cant} Solo Sopa con Arroz`;
-          return `${cant} ${desc}`;
-        });
+    // 4. Detalles de Acompañantes (Solo Arroz y Ensalada)
+    const resumenFaltantesBot: Record<string, number> = {};
+    pedidosPendientes.forEach(p => {
+      getItems(p).forEach(item => {
+        const { completaBot, faltantesBot } = getEstadoPlato(item);
+        if (!completaBot && !item.completado) {
+          const desc = `${item.proteina} sin ${faltantesBot.join(' ni ')}`;
+          resumenFaltantesBot[desc] = (resumenFaltantesBot[desc] || 0) + (item.cantidad || 1);
+        }
+      });
+    });
 
-      if (detallesImportantes.length > 0) {
-        texto += `atención especial para: ${detallesImportantes.join(', ')}. `;
-      }
+    const especialesVoz = Object.entries(resumenFaltantesBot);
+    if (especialesVoz.length > 0) {
+      texto += `Atención: ${especialesVoz.map(([desc, cant]) => `${cant} ${desc}`).join(', ')}. `;
+    }
+
+    // 5. Solo Sopa con Arroz (si hay)
+    const ssos = Object.entries(resumenSoloSopaArroz);
+    if (ssos.length > 0) {
+      texto += `También hay ${ssos.map(([desc, cant]) => `${cant} ${desc}`).join(', ')}. `;
     }
 
     speakText(texto);
