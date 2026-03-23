@@ -15,7 +15,7 @@ export default function Cocina() {
   const [fechaFiltro, setFechaFiltro] = useState<string>(getColombiaDateString());
   const wakeLockRef = useRef<any>(null);
   const wakeLockTimeoutRef = useRef<any>(null);
-  const { permission, requestPermission, notifyNewOrder, playBeep, playTripleBeep, speakText, speakNewOrder } = useKitchenNotifications();
+  const { permission, requestPermission, notifyNewOrder, playTripleBeep, speakText, speakNewOrder } = useKitchenNotifications();
   const [toastNotificacion, setToastNotificacion] = useState<{ id: string, titulo: string, msj: string } | null>(null);
   
   // Ref para tener siempre la última data en el loop de voz (evitar stale closures)
@@ -313,13 +313,7 @@ export default function Cocina() {
   }, [pedidos, resumenProteinas, resumenSopas, resumenArroz, resumenMediaSopa, resumenSoloSopaArroz, resumenEspeciales, pedidosPendientes]);
 
   const totalEspeciales = Object.values(resumenEspeciales).reduce((a, b) => a + b, 0);
-  const realesCompletos = pedidosPendientes.reduce((acc, p) => {
-    getItems(p).forEach(item => {
-      const { completa } = getEstadoPlato(item);
-      if (completa && item.proteina && item.proteina !== 'Solo Sopa' && item.tipoPlato !== 'arroz' && item.tipoPlato !== 'snack') acc += item.cantidad || 1;
-    });
-    return acc;
-  }, 0);
+
 
 
   const timerRef = useRef<any>(null);
@@ -336,12 +330,10 @@ export default function Cocina() {
   const narrarResumenDetallado = (autoSchedule = false) => {
     const { 
        pedidosPendientes: pps, 
-       resumenProteinas: rPs, 
        resumenSopas: rSs, 
        resumenArroz: rAs, 
        resumenMediaSopa: rMS, 
-       resumenSoloSopaArroz: rSSA, 
-       resumenEspeciales: rEs 
+       resumenSoloSopaArroz: rSSA 
     } = stateRef.current;
 
     if (pps.length === 0) {
