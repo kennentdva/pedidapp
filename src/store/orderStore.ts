@@ -31,6 +31,7 @@ export type PedidoDetalle = {
   // Multi-item: cuando hay más de una comida en el mismo pedido
   items?: ItemPedido[];
   mediaSopa?: boolean;
+  cantidad?: number;
 };
 
 export type Pedido = {
@@ -66,6 +67,7 @@ export type MenuConfig = {
     descripcion: string;
     precio?: number;
   };
+  narratorInterval?: number;
 };
 
 interface OrderState {
@@ -86,8 +88,8 @@ interface OrderState {
   toggleMediaSopa: () => void;
   toggleExtra: (e: string, precio: number) => void;
   setValorBase: (v: number) => void;
-  setSnackDirecto: (snackName: string, precio: number) => void;
-  setArrozEspecial: (nombre: string, precio: number) => void;
+  setSnackDirecto: (snackName: string, precio: number, cantidad?: number) => void;
+  setArrozEspecial: (nombre: string, precio: number, cantidad?: number) => void;
   setPlatoCompleto: () => void;
   addItemAlCarrito: () => void;
   removeItemDelCarrito: (index: number) => void;
@@ -109,7 +111,8 @@ const initialState = {
     acompanamientos: [],
     sopa: null,
     extras: [],
-    mediaSopa: false
+    mediaSopa: false,
+    cantidad: 1
   },
   valorBase: 0,
   precioManual: false,
@@ -146,7 +149,8 @@ const defaultMenuConfig: MenuConfig = {
     'Solo Sopa': 4000
   },
   precioSopaAdicional: 2000,
-  menuDia: { activo: false, titulo: '', descripcion: '', precio: undefined }
+  menuDia: { activo: false, titulo: '', descripcion: '', precio: undefined },
+  narratorInterval: 15
 };
 
 const savedMenuConfig = localStorage.getItem('pedidapp_menu_config');
@@ -168,6 +172,9 @@ if (!initialMenuConfig.preciosProteinas) {
 }
 if (initialMenuConfig.precioSopaAdicional === undefined) {
   initialMenuConfig.precioSopaAdicional = defaultMenuConfig.precioSopaAdicional;
+}
+if (initialMenuConfig.narratorInterval === undefined) {
+  initialMenuConfig.narratorInterval = defaultMenuConfig.narratorInterval;
 }
 
 const calcularPrecio = (proteina: string | null, sopa: string | null, acompanamientos: string[], manualPrice: boolean, currentValor: number, config: MenuConfig) => {
@@ -248,16 +255,16 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
   setValorBase: (v) => set({ valorBase: v, precioManual: true }),
   
-  setSnackDirecto: (snackName: string, precio: number) => set({
+  setSnackDirecto: (snackName: string, precio: number, cantidad = 1) => set({
      precioManual: true,
      valorBase: precio,
-     detalle: { proteina: snackName, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'snack' }
+     detalle: { proteina: snackName, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'snack', cantidad }
   }),
 
-  setArrozEspecial: (nombre: string, precio: number) => set({
+  setArrozEspecial: (nombre: string, precio: number, cantidad = 1) => set({
      precioManual: true,
      valorBase: precio,
-     detalle: { proteina: nombre, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'arroz' }
+     detalle: { proteina: nombre, acompanamientos: [], sopa: null, extras: [], tipoPlato: 'arroz', cantidad }
   }),
 
   setPlatoCompleto: () => set((state) => {
@@ -279,7 +286,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       nota: state.detalle.nota,
       tipoPlato: state.detalle.tipoPlato,
       valor: state.valorBase,
-      cantidad: 1,
+      cantidad: state.detalle.cantidad || 1,
       completado: false,
       mediaSopa: state.detalle.mediaSopa
     };
@@ -299,12 +306,12 @@ export const useOrderStore = create<OrderState>((set, get) => ({
       const newCarrito = [...state.carrito];
       newCarrito[existingIndex] = {
         ...newCarrito[existingIndex],
-        cantidad: newCarrito[existingIndex].cantidad + 1,
+        cantidad: newCarrito[existingIndex].cantidad + newItem.cantidad,
         valor: newCarrito[existingIndex].valor + newItem.valor
       };
       return {
         carrito: newCarrito,
-        detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+        detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false, cantidad: 1 },
         valorBase: 0,
         precioManual: false,
       };
@@ -312,7 +319,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
 
     return {
       carrito: [...state.carrito, newItem],
-      detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+      detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false, cantidad: 1 },
       valorBase: 0,
       precioManual: false,
     };
@@ -375,7 +382,7 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     responsable: null,
     beneficiario: '',
     carrito: [],
-    detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false },
+    detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [], mediaSopa: false, cantidad: 1 },
     valorBase: 0,
     precioManual: false,
     editingPedidoId: null

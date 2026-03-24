@@ -180,7 +180,16 @@ export default function Despacho() {
   const getItems = (p: Pedido): any[] => {
     const items = (p.detalle as any)?.items;
     if (items && Array.isArray(items) && items.length > 0) return items;
-    return [{ proteina: p.detalle?.proteina, sopa: p.detalle?.sopa, acompanamientos: p.detalle?.acompanamientos ?? [], extras: p.detalle?.extras ?? [], nota: p.detalle?.nota, tipoPlato: p.detalle?.tipoPlato }];
+    return [{ 
+      proteina: p.detalle?.proteina, 
+      sopa: p.detalle?.sopa, 
+      acompanamientos: p.detalle?.acompanamientos ?? [], 
+      extras: p.detalle?.extras ?? [], 
+      nota: p.detalle?.nota, 
+      tipoPlato: p.detalle?.tipoPlato,
+      cantidad: p.detalle?.cantidad || 1,
+      completado: p.estado_cocina === 'empacado' || p.estado_entrega === 'entregado'
+    }];
   };
 
   // ── Production summary logic (similar to Cocina) ──
@@ -189,10 +198,9 @@ export default function Despacho() {
   const resumenProteinas = pedidosFaltantes.reduce((acc, p) => {
     getItems(p).forEach(item => {
       const prot = item?.proteina;
-      const cant = item?.cantidad || 1;
       const isCompletado = item?.completado === true; // En despacho, "completado" significa empacado
       if (prot && !isCompletado && prot !== 'Solo Sopa' && item?.tipoPlato !== 'arroz' && item?.tipoPlato !== 'snack') {
-        acc[prot] = (acc[prot] || 0) + cant;
+        acc[prot] = (acc[prot] || 0) + (item.cantidad || 1);
       }
     });
     return acc;
@@ -201,9 +209,8 @@ export default function Despacho() {
   const resumenSopas = pedidosFaltantes.reduce((acc, p) => {
     getItems(p).forEach(item => {
       const s = item?.sopa;
-      const cant = item?.cantidad || 1;
       const isCompletado = item?.completado === true;
-      if (s && !isCompletado) acc[s] = (acc[s] || 0) + cant;
+      if (s && !isCompletado) acc[s] = (acc[s] || 0) + (item.cantidad || 1);
     });
     return acc;
   }, {} as Record<string, number>);

@@ -131,7 +131,7 @@ export default function Cocina() {
       nota: p.detalle?.nota, 
       tipoPlato: p.detalle?.tipoPlato,
       valor: p.valor,
-      cantidad: 1,
+      cantidad: p.detalle?.cantidad || 1,
       completado: p.estado_cocina === 'empacado',
       mediaSopa: p.detalle?.mediaSopa
     }];
@@ -147,10 +147,9 @@ export default function Cocina() {
   const resumenProteinas = pedidosPendientes.reduce((acc, p) => {
     getItems(p).forEach(item => {
       const prot = item?.proteina;
-      const cant = item?.cantidad || 1;
       const isCompletado = item?.completado === true;
       if (prot && !isCompletado && prot !== 'Solo Sopa' && item?.tipoPlato !== 'arroz' && item?.tipoPlato !== 'snack') {
-        acc[prot] = (acc[prot] || 0) + cant;
+        acc[prot] = (acc[prot] || 0) + (item.cantidad || 1);
       }
     });
     return acc;
@@ -445,7 +444,8 @@ export default function Cocina() {
 
     speakText(texto, () => {
       if (autoSchedule) {
-        programarProximaNarracion(15 * 60 * 1000);
+        const interval = useOrderStore.getState().menuConfig.narratorInterval || 15;
+        programarProximaNarracion(interval * 60 * 1000);
       }
     });
   };
@@ -603,13 +603,30 @@ export default function Cocina() {
             
             {/* Prueba de Sonido/Voz */}
             <button
-              onClick={() => narrarResumenDetallado()}
-              className="p-2 rounded-xl border border-neutral-700 bg-neutral-800 text-neutral-400 hover:text-white transition-colors flex items-center gap-2"
-              title="Probar Resumen de Voz"
-            >
-              <UtensilsCrossed size={16} />
-              <span className="text-[10px] font-bold">PROBAR RESUMEN</span>
-            </button>
+               onClick={() => narrarResumenDetallado()}
+               className="p-2 rounded-xl border border-neutral-700 bg-neutral-800 text-neutral-400 hover:text-white transition-colors flex items-center gap-2"
+               title="Probar Resumen de Voz"
+             >
+               <UtensilsCrossed size={16} />
+               <span className="text-[10px] font-bold">PROBAR RESUMEN</span>
+             </button>
+
+             {/* Narrator Interval Select */}
+             <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-xl" title="Intervalo de voz en minutos">
+                <Clock size={14} className="text-neutral-500" />
+                <select 
+                  value={useOrderStore(state => state.menuConfig).narratorInterval || 15}
+                  onChange={(e) => useOrderStore.getState().setMenuConfig({ narratorInterval: Number(e.target.value) })}
+                  className="bg-transparent text-white outline-none border-none text-[10px] font-bold cursor-pointer"
+                >
+                  <option value={1} className="bg-neutral-900">1 min (Test)</option>
+                  <option value={5} className="bg-neutral-900">5 min</option>
+                  <option value={10} className="bg-neutral-900">10 min</option>
+                  <option value={15} className="bg-neutral-900">15 min</option>
+                  <option value={20} className="bg-neutral-900">20 min</option>
+                  <option value={30} className="bg-neutral-900">30 min</option>
+                </select>
+             </div>
            {/* Date filter */}
            <div className="flex items-center gap-2 bg-neutral-900 border border-neutral-800 px-3 py-1 rounded-xl">
              <span className="text-neutral-500 text-sm hidden md:block">Fecha:</span>

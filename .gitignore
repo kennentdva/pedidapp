@@ -22,3 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment
+.env
+.env.local
+.env.*
+
+# Temp / Logs
+*.txt
+*.js
+*.ts
+!src/**/*.ts
+!src/**/*.tsx
+!eslint.config.js
+!vite.config.ts
+!scripts/**/*.js
+!public/**/*.js

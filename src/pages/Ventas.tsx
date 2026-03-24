@@ -95,7 +95,7 @@ export default function Ventas() {
       nota: store.detalle.nota, 
       tipoPlato: store.detalle.tipoPlato, 
       valor: store.valorBase,
-      cantidad: 1,
+      cantidad: store.detalle.cantidad || 1,
       completado: false,
       mediaSopa: store.detalle.mediaSopa
     });
@@ -114,7 +114,8 @@ export default function Ventas() {
         extras: it.extras, 
         nota: it.nota, 
         tipoPlato: it.tipoPlato,
-        mediaSopa: it.mediaSopa 
+        mediaSopa: it.mediaSopa,
+        cantidad: it.cantidad
       };
     } else {
       detalleEnviar = { proteina: itemsFinales.map(i => i.proteina).filter(Boolean).join(' + '), acompanamientos: [], sopa: null, extras: [], items: itemsFinales };
@@ -163,7 +164,7 @@ export default function Ventas() {
     const cant = arrozCantidad[arroz.nombre] || 1;
     const precio = porcion === 'pequeña' ? arroz.precioSmall : arroz.precioLarge;
     const tag = cant > 1 ? `${cant}x ${arroz.nombre} ${porcion}` : `${arroz.nombre} ${porcion}`;
-    store.setArrozEspecial(tag, precio * cant);
+    store.setArrozEspecial(tag, precio * cant, cant);
   };
 
   const nombreCliente = ultimoPedidoCliente?.beneficiario || ultimoPedidoCliente?.responsable?.nombre || 'el docente';
@@ -316,7 +317,7 @@ export default function Ventas() {
                 const nameQ = qty > 1 ? `${qty}x ${snack.nombre}` : snack.nombre;
                 const total = snack.precio * qty;
                 const sel = store.detalle.proteina === nameQ && store.detalle.tipoPlato === 'snack';
-                return (<div key={snack.nombre} className={`p-4 rounded-3xl border-2 text-center shadow-xl flex flex-col items-center ${sel ? 'bg-cyan-500/20 border-cyan-400' : 'bg-neutral-800 border-neutral-700'}`}><p className={`font-black text-xl mb-1 ${sel ? 'text-cyan-400' : 'text-white'}`}>{snack.nombre}</p><p className="text-sm mb-3 text-neutral-400">{snack.desc || `$${snack.precio.toLocaleString()} c/u`}</p><div className="flex items-center gap-4 bg-neutral-900 rounded-xl p-1 mb-4"><button onClick={() => updSnackQty(snack.nombre, -1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">-</button><span className="font-bold text-lg w-4 text-white text-center">{qty}</span><button onClick={() => updSnackQty(snack.nombre, 1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">+</button></div><button onClick={() => store.setSnackDirecto(nameQ, total)} className={`w-full py-3 rounded-xl font-bold transition-colors ${sel ? 'bg-cyan-500 text-white' : 'bg-neutral-900 text-cyan-400 border border-cyan-900/50 hover:bg-neutral-800'}`}>{sel ? 'Seleccionado' : 'Vender'} (${total.toLocaleString()})</button></div>);
+                return (<div key={snack.nombre} className={`p-4 rounded-3xl border-2 text-center shadow-xl flex flex-col items-center ${sel ? 'bg-cyan-500/20 border-cyan-400' : 'bg-neutral-800 border-neutral-700'}`}><p className={`font-black text-xl mb-1 ${sel ? 'text-cyan-400' : 'text-white'}`}>{snack.nombre}</p><p className="text-sm mb-3 text-neutral-400">{snack.desc || `$${snack.precio.toLocaleString()} c/u`}</p><div className="flex items-center gap-4 bg-neutral-900 rounded-xl p-1 mb-4"><button onClick={() => updSnackQty(snack.nombre, -1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">-</button><span className="font-bold text-lg w-4 text-white text-center">{qty}</span><button onClick={() => updSnackQty(snack.nombre, 1)} className="w-8 h-8 rounded-lg bg-neutral-800 text-white font-bold hover:bg-neutral-700">+</button></div><button onClick={() => store.setSnackDirecto(nameQ, total, qty)} className={`w-full py-3 rounded-xl font-bold transition-colors ${sel ? 'bg-cyan-500 text-white' : 'bg-neutral-900 text-cyan-400 border border-cyan-900/50 hover:bg-neutral-800'}`}>{sel ? 'Seleccionado' : 'Vender'} (${total.toLocaleString()})</button></div>);
               })}
             </div>
           </div>
