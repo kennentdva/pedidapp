@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Truck, Calendar, Trash2, Edit2, Search, Plus, X, ChevronDown, Check, Clock, Flame } from 'lucide-react';
+import { Truck, Calendar, Trash2, Edit2, Search, Plus, X, ChevronDown, Check, Clock, Flame, CheckSquare } from 'lucide-react';
 import { type Pedido, useOrderStore } from '../store/orderStore';
 import { getColombiaDateString, getColombiaStartOfDay, getColombiaEndOfDay } from '../lib/dateUtils';
 
@@ -89,6 +89,48 @@ export default function Despacho() {
 
     await supabase.from('pedidos').update({ estado_entrega: nuevoEstado }).eq('id', p.id);
     fetchPedidosPorFecha();
+  };
+
+  const entregarTodoPendiente = async () => {
+    const pendientes = pedidos.filter(p => p.estado_entrega === 'en_espera');
+    if (pendientes.length === 0) {
+      alert('No hay pedidos pendientes para entregar hoy.');
+      return;
+    }
+    
+    if (!window.confirm(`¿Estás seguro de marcar ${pendientes.length} pedidos pendientes como ENTREGADOS?`)) return;
+
+    setLoading(true);
+    let g = 0; let pq = 0; let s = 0;
+
+    pendientes.forEach(p => {
+      getItems(p).forEach(it => {
+          if ((it?.sopa || it?.proteina === 'Solo Sopa') && !it.completado) s += (it.cantidad || 1);
+          const isArrozPequeno = it?.tipoPlato === 'arroz' && (it?.proteina?.toLowerCase().includes('peque') || it?.proteina?.toLowerCase().includes('peq'));
+          const isSopaConArroz = it?.proteina === 'Solo Sopa' && it?.acompanamientos?.includes('Arroz');
+          const isPorcionSola = it?.tipoPlato === 'normal' && it?.proteina?.toLowerCase().includes('porción'); 
+          if ((isArrozPequeno || isSopaConArroz || isPorcionSola) && !it.completado) pq += (it.cantidad || 1);
+          const isProteina = it?.tipoPlato === 'normal' && it?.proteina !== 'Solo Sopa';
+          const isArrozGrande = it?.tipoPlato === 'arroz' && !isArrozPequeno;
+          if ((isProteina || isArrozGrande) && !it.completado) g += (it.cantidad || 1);
+      });
+    });
+
+    const inv = useOrderStore.getState().inventarioPortas;
+    const updateInv = useOrderStore.getState().updateInventarioPortas;
+    
+    await updateInv({ grande: inv.grande - g, pequeno: inv.pequeno - pq, sopa: inv.sopa - s });
+
+    const ids = pendientes.map(p => p.id);
+    const { error } = await supabase.from('pedidos').update({ estado_entrega: 'entregado' }).in('id', ids);
+    
+    if (error) {
+      alert("Error al entregar masivamente: " + error.message);
+      await updateInv({ grande: inv.grande + g, pequeno: inv.pequeno + pq, sopa: inv.sopa + s });
+    } else {
+      fetchPedidosPorFecha();
+    }
+    setLoading(false);
   };
 
   const togglePagado = async (p: Pedido) => {
@@ -460,6 +502,14 @@ export default function Despacho() {
         </div>
         <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 p-2 rounded-2xl">
           <div className="flex gap-2 mr-2">
+            <button 
+              onClick={entregarTodoPendiente} 
+              disabled={loading} 
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition-colors"
+              title="Marcar todos los pendientes listados como entregados"
+            >
+              <CheckSquare size={14}/> Entregar Pendientes
+            </button>
             <button 
               onClick={() => {
                 setInvGrandeStr(String(inventario.grande));

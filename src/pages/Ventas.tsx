@@ -36,6 +36,7 @@ export default function Ventas() {
   const [newArrozNombre, setNewArrozNombre] = useState('');
   const [newArrozPrecioS, setNewArrozPrecioS] = useState('');
   const [newArrozPrecioL, setNewArrozPrecioL] = useState('');
+  const [fechaPedidoManual, setFechaPedidoManual] = useState('');
 
   const updSnackQty = (s: string, d: number) => setSnackQtys(p => ({ ...p, [s]: Math.max(1, (p[s] || 1) + d) }));
   const updArrozCant = (n: string, d: number) => setArrozCantidad(p => ({ ...p, [n]: Math.max(1, (p[n] || 1) + d) }));
@@ -66,11 +67,12 @@ export default function Ventas() {
     if (bannerTimer.current) clearTimeout(bannerTimer.current);
     if (ultimoPedidoCliente) { useOrderStore.setState({ responsable: ultimoPedidoCliente.responsable, beneficiario: ultimoPedidoCliente.beneficiario, carrito: [], detalle: { proteina: null, acompanamientos: [], sopa: null, extras: [] }, valorBase: 0, precioManual: false, editingPedidoId: null }); setSearch(ultimoPedidoCliente.responsable?.nombre || ''); }
     setUltimoPedidoCliente(null);
+    setFechaPedidoManual('');
     setActiveTab('Restaurante');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const nuevoPedidoDiferente = () => { if (bannerTimer.current) clearTimeout(bannerTimer.current); setUltimoPedidoCliente(null); store.resetOrder(); setSearch(''); };
+  const nuevoPedidoDiferente = () => { if (bannerTimer.current) clearTimeout(bannerTimer.current); setUltimoPedidoCliente(null); setFechaPedidoManual(''); store.resetOrder(); setSearch(''); };
 
   const hayItemActual = !!store.detalle.proteina;
   const totalCarrito = store.carrito.reduce((s, i) => s + i.valor, 0);
@@ -121,12 +123,16 @@ export default function Ventas() {
       detalleEnviar = { proteina: itemsFinales.map(i => i.proteina).filter(Boolean).join(' + '), acompanamientos: [], sopa: null, extras: [], items: itemsFinales };
     }
     const todosSnacks = itemsFinales.every(i => i.tipoPlato === 'snack');
-    const orderData = { responsable_id: store.responsable?.id || null, beneficiario: store.beneficiario.trim() || store.responsable?.nombre || '', detalle: detalleEnviar, valor, estado_cocina: todosSnacks ? 'empacado' : 'pendiente', estado_entrega: 'en_espera', pagado: false };
+
+    const fechaCustom = fechaPedidoManual ? new Date(fechaPedidoManual + 'T12:00:00').toISOString() : undefined;
+    
+    const orderData: any = { responsable_id: store.responsable?.id || null, beneficiario: store.beneficiario.trim() || store.responsable?.nombre || '', detalle: detalleEnviar, valor, estado_cocina: todosSnacks ? 'empacado' : 'pendiente', estado_entrega: 'en_espera', pagado: false };
+    if (fechaCustom) orderData.created_at = fechaCustom;
 
     if (store.editingPedidoId) {
-      const { error } = await supabase.from('pedidos').update({ responsable_id: orderData.responsable_id, beneficiario: orderData.beneficiario, detalle: orderData.detalle, valor: orderData.valor }).eq('id', store.editingPedidoId);
+      const { error } = await supabase.from('pedidos').update({ responsable_id: orderData.responsable_id, beneficiario: orderData.beneficiario, detalle: orderData.detalle, valor: orderData.valor, created_at: orderData.created_at }).eq('id', store.editingPedidoId);
       setSaving(false);
-      if (error) alert("Error: " + error.message); else { store.resetOrder(); setSearch(''); fetchPedidosRecientes(); alert("¡Pedido actualizado!"); }
+      if (error) alert("Error: " + error.message); else { store.resetOrder(); setFechaPedidoManual(''); setSearch(''); fetchPedidosRecientes(); alert("¡Pedido actualizado!"); }
       return;
     }
 
@@ -341,6 +347,11 @@ export default function Ventas() {
           </div>
           {showClienteForm && (<div className="flex gap-2 mb-4"><input type="text" placeholder="Nombre" className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3 outline-none focus:border-orange-500" value={nuevoCliente} onChange={e => setNuevoCliente(e.target.value)} /><button onClick={crearCliente} disabled={loadingConfig} className="bg-neutral-800 p-3 rounded-xl hover:bg-neutral-700"><Save size={18} /></button></div>)}
           <div><label className="text-xs text-neutral-500 mb-1 block">Beneficiario (Quién recibe)</label><input type="text" placeholder="Ej: Carlos, Para llevar..." className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:border-orange-500" value={store.beneficiario} onChange={e => store.setBeneficiario(e.target.value)} /></div>
+          
+          <div className="mt-4 pt-4 border-t border-neutral-800">
+             <label className="text-xs text-neutral-500 mb-1 flex items-center gap-2">Fecha del Pedido (Opcional) <span className="bg-neutral-800 text-[9px] px-1.5 rounded uppercase font-bold text-neutral-400 tracking-wider">Deudas Viejas</span></label>
+             <input type="date" className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-4 py-3 outline-none focus:border-blue-500 text-neutral-400 text-sm" value={fechaPedidoManual} onChange={e => setFechaPedidoManual(e.target.value)} />
+          </div>
         </div>
 
         {/* Carrito */}

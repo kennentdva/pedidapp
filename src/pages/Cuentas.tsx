@@ -56,6 +56,7 @@ export default function Cuentas() {
   
   // Custom Modal
   const [abonoToDelete, setAbonoToDelete] = useState<{ id: string, monto: number, metodo?: string } | null>(null);
+  const [pedidoToDelete, setPedidoToDelete] = useState<{ id: string, descripcion: string } | null>(null);
 
   const menuConfig = useOrderStore(state => state.menuConfig);
 
@@ -290,23 +291,31 @@ export default function Cuentas() {
     if (!abonoToDelete) return;
     
     setLoading(true);
-
-    // Búsqueda del plato para quitarle la marca de pagado
-    // Al ser un ENUM no podemos guardar el ID, así que buscamos por valor y estado
-    const pedidoToReset = historialPedidos.find(p => p.pagado && p.valor === abonoToDelete.monto);
-    if (pedidoToReset) {
-      await supabase.from('pedidos').update({ pagado: false }).eq('id', pedidoToReset.id!);
-    }
-
+    setLoading(true);
+    
     const { error } = await supabase.from('pagos').delete().eq('id', abonoToDelete.id);
     
     if (!error) {
       if (selectedCliente) seleccionarCliente(selectedCliente);
       fetchDeudaGlobal();
     } else {
-      alert('Error al intentar eliminar el abono.');
+      alert("Error al eliminar abono: " + error.message);
     }
     setAbonoToDelete(null);
+    setLoading(false);
+  };
+
+  const confirmarEliminarPedido = async () => {
+    if (!pedidoToDelete) return;
+    setLoading(true);
+    const { error } = await supabase.from('pedidos').delete().eq('id', pedidoToDelete.id);
+    if (!error) {
+      setHistorialPedidos(prev => prev.filter(p => p.id !== pedidoToDelete.id));
+      setPedidoToDelete(null);
+      fetchDeudaGlobal();
+    } else {
+      alert("Error al eliminar pedido: " + error.message);
+    }
     setLoading(false);
   };
 
@@ -1086,7 +1095,7 @@ export default function Cuentas() {
                    {pedidosLedgerFiltered.filter(p => mostrarArchivados ? true : !p.calcPagado).map(p => {
                      const d = new Date(p.created_at || '');
                      return (
-                       <div key={p.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-4 rounded-2xl relative overflow-hidden">
+                       <div key={p.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-4 rounded-2xl relative overflow-hidden group">
                          {!p.calcPagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500"></div>}
                          {p.calcPagado && <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500"></div>}
                                                   <div className="pl-3 flex-1">
@@ -1147,13 +1156,30 @@ export default function Cuentas() {
                                 )}
                               </div>
                             )}
-                            {!(p as any).calcPagado && (
-                              <button 
-                                onClick={() => saldarPedidoEspecifico(p)}
-                                className="text-[10px] bg-emerald-600/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-600 hover:text-white transition-colors mt-1"
-                              >
-                                Saldar Día
-                              </button>
+                            {!(p as any).calcPagado ? (
+                               <div className="flex gap-2 items-center mt-1">
+                                 <button 
+                                   onClick={() => setPedidoToDelete({ id: p.id!, descripcion: ((p.detalle as any)?.items ? 'Pedido Múltiple' : (p.detalle?.proteina || 'Comida')) })}
+                                   className="text-xs text-red-500 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
+                                   title="Eliminar pedido"
+                                 >
+                                   <Trash2 size={14}/>
+                                 </button>
+                                 <button 
+                                   onClick={() => saldarPedidoEspecifico(p)}
+                                   className="text-[10px] bg-emerald-600/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-600 hover:text-white transition-colors"
+                                 >
+                                   Saldar Día
+                                 </button>
+                               </div>
+                            ) : (
+                               <button 
+                                 onClick={() => setPedidoToDelete({ id: p.id!, descripcion: ((p.detalle as any)?.items ? 'Pedido Múltiple' : (p.detalle?.proteina || 'Comida')) })}
+                                 className="text-xs text-red-500 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20 mt-1"
+                                 title="Eliminar pedido"
+                               >
+                                 <Trash2 size={14}/>
+                               </button>
                             )}
                           </div>
                        </div>
@@ -1455,6 +1481,37 @@ export default function Cuentas() {
               </button>
               <button 
                 onClick={confirmarEliminarAbono}
+                className="py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500 transition-colors shadow-lg shadow-red-600/30"
+                disabled={loading}
+              >
+                {loading ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Eliminar Pedido */}
+      {pedidoToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl relative text-center animate-fade-in">
+            <div className="mx-auto w-16 h-16 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mb-4">
+              <Trash2 size={32} />
+            </div>
+            <h2 className="text-xl font-black text-white mb-2">Eliminar Consumo</h2>
+            <p className="text-neutral-400 text-sm mb-6">
+              ¿Seguro que deseas eliminar el pedido: <strong className="text-white">{pedidoToDelete.descripcion}</strong>?
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => setPedidoToDelete(null)}
+                className="py-3 rounded-xl font-bold text-neutral-400 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-colors"
+                disabled={loading}
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={confirmarEliminarPedido}
                 className="py-3 rounded-xl font-bold text-white bg-red-600 hover:bg-red-500 transition-colors shadow-lg shadow-red-600/30"
                 disabled={loading}
               >
