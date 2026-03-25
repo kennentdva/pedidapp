@@ -40,9 +40,54 @@ export default function Despacho() {
     setLoading(false);
   };
 
-  const marcarEntregado = async (id: string, actual: string) => {
-    const nuevoEstado = actual === 'en_espera' ? 'entregado' : 'en_espera';
-    await supabase.from('pedidos').update({ estado_entrega: nuevoEstado }).eq('id', id);
+  // State for Inventory Modal
+  const [showInvModal, setShowInvModal] = useState(false);
+  const [invGrandeStr, setInvGrandeStr] = useState('');
+  const [invPequenoStr, setInvPequenoStr] = useState('');
+  const [invSopaStr, setInvSopaStr] = useState('');
+
+  const inventario = useOrderStore(state => state.inventarioPortas);
+
+  useEffect(() => { 
+    useOrderStore.getState().fetchInventarioPortas(); 
+  }, []);
+
+  const marcarEntregado = async (p: Pedido) => {
+    const nuevoEstado = p.estado_entrega === 'en_espera' ? 'entregado' : 'en_espera';
+    
+    // Calcular portas consumidos por este pedido
+    let g = 0; let pq = 0; let s = 0;
+    getItems(p).forEach(it => {
+        // --- Sopa ---
+        if ((it?.sopa || it?.proteina === 'Solo Sopa') && !it.completado) s += (it.cantidad || 1);
+        
+        // --- Porta Pequeño ---
+        const isArrozPequeno = it?.tipoPlato === 'arroz' && (it?.proteina?.toLowerCase().includes('peque') || it?.proteina?.toLowerCase().includes('peq'));
+        const isSopaConArroz = it?.proteina === 'Solo Sopa' && it?.acompanamientos?.includes('Arroz');
+        const isPorcionSola = it?.tipoPlato === 'normal' && it?.proteina?.toLowerCase().includes('porción'); 
+        
+        if ((isArrozPequeno || isSopaConArroz || isPorcionSola) && !it.completado) pq += (it.cantidad || 1);
+        
+        // --- Porta Grande ---
+        const isProteina = it?.tipoPlato === 'normal' && it?.proteina !== 'Solo Sopa';
+        const isArrozGrande = it?.tipoPlato === 'arroz' && !isArrozPequeno;
+        
+        if ((isProteina || isArrozGrande) && !it.completado) g += (it.cantidad || 1);
+    });
+
+    const inv = useOrderStore.getState().inventarioPortas;
+    const updateInv = useOrderStore.getState().updateInventarioPortas;
+    
+    // Nota: it.completado significa empacado/entregado. Cuando marcamos Entregado, consumimos.
+    // Si revertimos de 'entregado' a 'en_espera', devolvemos al inventario.
+    // (Asegurar que p tenía realmente estas cantidades aplicables)
+    if (nuevoEstado === 'entregado') {
+      await updateInv({ grande: inv.grande - g, pequeno: inv.pequeno - pq, sopa: inv.sopa - s });
+    } else {
+      await updateInv({ grande: inv.grande + g, pequeno: inv.pequeno + pq, sopa: inv.sopa + s });
+    }
+
+    await supabase.from('pedidos').update({ estado_entrega: nuevoEstado }).eq('id', p.id);
     fetchPedidosPorFecha();
   };
 
@@ -235,6 +280,48 @@ export default function Despacho() {
     return acc;
   }, {} as Record<string, { total: number, pequeña: number, grande: number }>);
 
+  const resumenMediaSopa = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      if (item.mediaSopa && !item.completado && item.sopa) {
+        acc[item.sopa] = (acc[item.sopa] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const resumenSoloSopaArroz = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      if (item.proteina === 'Solo Sopa' && item.acompanamientos?.includes('Arroz') && !item.completado) {
+        acc['Solo Sopa con Arroz'] = (acc['Solo Sopa con Arroz'] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const getEstadoPlato = (item: any) => {
+    if (item.tipoPlato === 'arroz' || item.tipoPlato === 'snack' || item.proteina === 'Solo Sopa') return { completaBot: true, faltantesBot: [] };
+    const acc = item.acompanamientos || [];
+    const faltantesBot = [];
+    if (!acc.includes('Arroz')) faltantesBot.push('Arroz');
+    if (!acc.includes('Ensalada')) faltantesBot.push('Ensalada');
+    const tienePrincipe = acc.some((a: string) => ['Papas', 'Patacón', 'Frijol', 'Yuca', 'Tajadas', 'Maduro'].includes(a));
+    if (!tienePrincipe) faltantesBot.push('acompañante');
+    return { completaBot: faltantesBot.length === 0, faltantesBot };
+  };
+
+  const resumenEspeciales = pedidosFaltantes.reduce((acc, p) => {
+    getItems(p).forEach(item => {
+      const { completaBot, faltantesBot } = getEstadoPlato(item);
+      if (!completaBot && item.proteina !== 'Solo Sopa' && !item.completado) {
+        const desc = `${item.proteina} sin ${faltantesBot.join(' ni ')}`;
+        acc[desc] = (acc[desc] || 0) + (item.cantidad || 1);
+      }
+    });
+    return acc;
+  }, {} as Record<string, number>);
+
+  const totalEspeciales = Object.values(resumenEspeciales).reduce((a, b) => a + b, 0);
+
   const totalArrocesPendientes = Object.values(resumenArroz).reduce((a, b) => a + b.total, 0);
   const totalHoy = pedidos.length;
   const yaEntregados = pedidos.filter(p => p.estado_entrega === 'entregado').length;
@@ -342,7 +429,7 @@ export default function Despacho() {
                 </button>
               )}
               {isToday && (
-                <button onClick={() => marcarEntregado(p.id!, p.estado_entrega!)} className={`text-[9px] font-black uppercase px-2 py-1 rounded transition-colors ${p.estado_entrega === 'entregado' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-neutral-700 text-neutral-400 hover:bg-emerald-600 hover:text-white'}`}>
+                <button onClick={() => marcarEntregado(p)} className={`text-[9px] font-black uppercase px-2 py-1 rounded transition-colors ${p.estado_entrega === 'entregado' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-neutral-700 text-neutral-400 hover:bg-emerald-600 hover:text-white'}`}>
                   {p.estado_entrega === 'entregado' ? '✓' : 'Entr.'}
                 </button>
               )}
@@ -372,6 +459,22 @@ export default function Despacho() {
           <div><h2 className="text-2xl font-bold">Despacho</h2><p className="text-neutral-400 text-sm">Control de entregas</p></div>
         </div>
         <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 p-2 rounded-2xl">
+          <button 
+            onClick={() => {
+              setInvGrandeStr(String(inventario.grande));
+              setInvPequenoStr(String(inventario.pequeno));
+              setInvSopaStr(String(inventario.sopa));
+              setShowInvModal(true);
+            }} 
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+              (inventario.grande < 50 || inventario.pequeno < 50 || inventario.sopa < 50) 
+              ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse' 
+              : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300'
+            }`}
+          >
+            📦 Portas
+          </button>
+          
           <div className="relative">
             <Search size={16} className="absolute left-3 top-2.5 text-neutral-500" />
             <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Buscar..." className="bg-neutral-950 text-white rounded-xl py-2 pl-9 pr-3 outline-none border border-neutral-800 text-sm w-40 md:w-auto" />
@@ -383,58 +486,74 @@ export default function Despacho() {
         </div>
       </div>
 
-      {/* Production summary logic cards (like Cocina) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full">
-        {/* Proteínas pendientes */}
-        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Proteínas por Entregar</span>
-           <div className="grid grid-cols-2 gap-2 flex-1">
-             {Object.entries(resumenProteinas).map(([prot, cant]) => (
-               <div key={prot} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
-                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{prot}</span>
-                 <span className="text-lg font-black text-orange-400">{cant}</span>
+      <div className="flex flex-col gap-4">
+        <Accordion title="1. Proteínas Pendientes" count={Object.values(resumenProteinas).reduce((a,b)=>a+b,0)}>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+            {Object.entries(resumenProteinas).map(([prot, cant]) => (
+              <div key={prot} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl">
+                <span className="text-xs font-bold text-neutral-400">{prot}</span>
+                <span className="text-sm font-black text-orange-400">{cant}</span>
+              </div>
+            ))}
+            {Object.keys(resumenProteinas).length === 0 && <span className="text-xs text-neutral-500">Todo entregado 🏆</span>}
+          </div>
+        </Accordion>
+
+        <Accordion title="2. Sopas (Enteras)" count={Object.entries(resumenSopas).filter(([k]) => !k.startsWith('Media')).reduce((a,b)=>a+b[1],0)}>
+           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+             {Object.entries(resumenSopas).filter(([k]) => !k.startsWith('Media')).map(([sopa, cant]) => (
+               <div key={sopa} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-neutral-400">{sopa}</span>
+                 <span className="text-sm font-black text-amber-500">{cant}</span>
                </div>
              ))}
-             {Object.keys(resumenProteinas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Todo entregado 🏆</span>}
+             {Object.keys(resumenSopas).length === 0 && <span className="text-xs text-neutral-500">Sin sopas pendientes 🥣</span>}
            </div>
-        </div>
+        </Accordion>
 
-        {/* Sopas pendientes */}
-        <div className="bg-neutral-900/50 backdrop-blur-md border border-neutral-800 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-neutral-500 mb-3 text-center w-full tracking-widest">Sopas Pendientes</span>
-           <div className="grid grid-cols-2 gap-2 flex-1">
-             {Object.entries(resumenSopas).map(([sopa, cant]) => (
-               <div key={sopa} className="flex justify-between items-center bg-neutral-950/50 border border-neutral-800/50 px-3 py-2 rounded-xl">
-                 <span className="text-xs font-bold text-neutral-400 truncate max-w-[80px]">{sopa}</span>
-                 <span className="text-lg font-black text-amber-500">{cant}</span>
+        <Accordion title="3. MEDIA SOPA 🥣" count={Object.values(resumenMediaSopa).reduce((a,b)=>a+b,0)} color="amber">
+           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+             {Object.entries(resumenMediaSopa).map(([sopa, cant]) => (
+               <div key={sopa} className="flex justify-between items-center bg-amber-950/20 border border-amber-900/40 px-3 py-2 rounded-xl">
+                 <span className="text-xs font-bold text-amber-500">{sopa}</span>
+                 <span className="text-sm font-black text-white">{cant}</span>
                </div>
              ))}
-             {Object.keys(resumenSopas).length === 0 && <span className="col-span-2 text-center text-xs text-neutral-500 mt-2">Sin sopas pend. 🥣</span>}
            </div>
-        </div>
+        </Accordion>
 
-        {/* Arroces pendientes */}
-        <div className="bg-yellow-950/10 backdrop-blur-md border border-yellow-900/30 rounded-3xl p-4 shadow-xl flex flex-col min-h-[140px]">
-           <span className="text-[10px] uppercase font-black text-yellow-500/50 mb-3 text-center w-full tracking-widest">Arroces Pendientes ({totalArrocesPendientes})</span>
-           <div className="flex flex-wrap gap-2 justify-center">
+        <Accordion title="4. SOLO SOPA CON ARROZ 🍚" count={resumenSoloSopaArroz['Solo Sopa con Arroz'] || 0} color="blue">
+           <div className="p-4 bg-blue-950/20 border border-blue-900/40 rounded-2xl flex justify-between items-center">
+             <span className="text-sm font-bold text-blue-400 uppercase tracking-widest italic">Combinación Especial de Sopa y Arroz</span>
+             <span className="text-3xl font-black text-white">{resumenSoloSopaArroz['Solo Sopa con Arroz'] || 0}</span>
+           </div>
+        </Accordion>
+
+        <Accordion title="5. Arroces Especiales" count={totalArrocesPendientes} color="yellow">
+           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
              {Object.entries(resumenArroz).map(([nombre, info]) => (
-               <div key={nombre} className="flex flex-col items-center bg-neutral-950 px-3 py-2 rounded-xl border border-yellow-900/20">
-                 <span className="text-xs text-neutral-400 mb-1">{nombre}</span>
+               <div key={nombre} className="bg-yellow-950/20 border border-yellow-900/30 p-3 rounded-2xl flex flex-col items-center">
+                 <span className="text-xs font-bold text-yellow-500 mb-1">{nombre}</span>
                  <div className="flex gap-4">
-                    <div className="flex flex-col items-center">
-                        <span className="text-[10px] font-black text-yellow-500">{info.pequeña}</span>
-                        <span className="text-[8px] uppercase text-neutral-600">P</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                        <span className="text-[10px] font-black text-orange-500">{info.grande}</span>
-                        <span className="text-[8px] uppercase text-neutral-600">G</span>
-                    </div>
+                   <div className="text-center"><span className="text-[10px] block text-neutral-500">PEQ</span><span className="font-bold text-white">{info.pequeña}</span></div>
+                   <div className="text-center"><span className="text-[10px] block text-neutral-500">GRA</span><span className="font-bold text-white">{info.grande}</span></div>
                  </div>
                </div>
              ))}
-             {Object.keys(resumenArroz).length === 0 && <span className="text-center text-xs text-neutral-500 mt-2">Sin arroces 🍚</span>}
            </div>
-        </div>
+        </Accordion>
+
+        <Accordion title={`6. Platos Especiales / Sin Algo (${totalEspeciales})`} count={totalEspeciales} color="red">
+           <div className="flex flex-col gap-2">
+              {Object.entries(resumenEspeciales).map(([desc, cant]) => (
+                <div key={desc} className="bg-red-950/30 border border-red-900/40 px-3 py-2 rounded-xl flex justify-between items-center">
+                  <span className="text-xs font-bold text-red-300">{desc}</span>
+                  <span className="text-lg font-black text-white">{cant}</span>
+                </div>
+              ))}
+              {totalEspeciales === 0 && <span className="text-xs text-neutral-500 italic">No hay pedidos especiales pendientes</span>}
+           </div>
+        </Accordion>
       </div>
 
       <div className="grid grid-cols-3 lg:grid-cols-5 gap-3 mb-2 w-full">
@@ -482,7 +601,7 @@ export default function Despacho() {
                         <h4 className="font-bold text-emerald-400 text-sm">{p.beneficiario}</h4>
                         <p className="text-xs text-neutral-500 mt-0.5">{detalleText(p)}</p>
                       </div>
-                      <button onClick={() => marcarEntregado(p.id!, p.estado_entrega!)} className="ml-3 w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-500">
+                      <button onClick={() => marcarEntregado(p)} className="ml-3 w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-500">
                         <Truck size={18} />
                       </button>
                     </div>
@@ -546,6 +665,58 @@ export default function Despacho() {
         </div>
       )}
 
+      {/* Modal: Inventario Portas */}
+      {showInvModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl w-full max-w-sm p-6 relative">
+            <button onClick={() => setShowInvModal(false)} className="absolute top-4 right-4 text-neutral-500 hover:text-white transition-colors"><X size={24} /></button>
+            <h2 className="text-xl font-black mb-1 flex items-center gap-2">📦 Inventario de Portas</h2>
+            <p className="text-xs text-neutral-400 mb-6">Ajusta la cantidad disponible. Se descuentan automáticamente al entregar pedidos.</p>
+            
+            <div className="space-y-4">
+              <div className="flex flex-col">
+                 <label className="text-sm font-bold text-neutral-300 mb-1 flex items-center justify-between">
+                    <span>Porta Grande</span>
+                    {Number(invGrandeStr) < 50 && <span className="text-xs text-red-500 animate-pulse font-black">¡STOCK BAJO!</span>}
+                 </label>
+                 <input type="number" min="0" value={invGrandeStr} onChange={e => setInvGrandeStr(e.target.value)} className="bg-neutral-950 text-white rounded-xl px-4 py-3 border border-neutral-800 focus:border-orange-500 outline-none" placeholder="200" />
+                 <span className="text-[10px] text-neutral-500 mt-1">Proteínas y arroces grandes</span>
+              </div>
+              <div className="flex flex-col">
+                 <label className="text-sm font-bold text-neutral-300 mb-1 flex items-center justify-between">
+                    <span>Porta Pequeño</span>
+                    {Number(invPequenoStr) < 50 && <span className="text-xs text-red-500 animate-pulse font-black">¡STOCK BAJO!</span>}
+                 </label>
+                 <input type="number" min="0" value={invPequenoStr} onChange={e => setInvPequenoStr(e.target.value)} className="bg-neutral-950 text-white rounded-xl px-4 py-3 border border-neutral-800 focus:border-orange-500 outline-none" placeholder="200" />
+                 <span className="text-[10px] text-neutral-500 mt-1">Arroz pequeño y solo sopa con arroz</span>
+              </div>
+              <div className="flex flex-col">
+                 <label className="text-sm font-bold text-neutral-300 mb-1 flex items-center justify-between">
+                    <span>Porta Sopa</span>
+                    {Number(invSopaStr) < 50 && <span className="text-xs text-red-500 animate-pulse font-black">¡STOCK BAJO!</span>}
+                 </label>
+                 <input type="number" min="0" value={invSopaStr} onChange={e => setInvSopaStr(e.target.value)} className="bg-neutral-950 text-white rounded-xl px-4 py-3 border border-neutral-800 focus:border-orange-500 outline-none" placeholder="200" />
+                 <span className="text-[10px] text-neutral-500 mt-1">Cualquier sopa o media sopa</span>
+              </div>
+
+              <button 
+                 onClick={async () => {
+                   await useOrderStore.getState().updateInventarioPortas({
+                      grande: Number(invGrandeStr) || 0,
+                      pequeno: Number(invPequenoStr) || 0,
+                      sopa: Number(invSopaStr) || 0
+                   });
+                   setShowInvModal(false);
+                 }} 
+                 className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl mt-4 transition-colors"
+              >
+                 Guardar Inventario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Confirmar eliminar */}
       {pedidoToDelete && (
         <div className="fixed inset-0 bg-black/80 z-50 flex justify-center items-center p-4">
@@ -559,6 +730,47 @@ export default function Despacho() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Accordion({ title, count, children, color = 'neutral' }: { title: string, count: number, children: React.ReactNode, color?: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  const colors: Record<string, string> = {
+    neutral: 'bg-neutral-900 border-neutral-800',
+    amber: 'bg-amber-950/10 border-amber-900/30',
+    yellow: 'bg-yellow-950/10 border-yellow-900/30',
+    blue: 'bg-blue-950/10 border-blue-900/30',
+    red: 'bg-red-950/10 border-red-900/20',
+  };
+
+  const textColors: Record<string, string> = {
+    neutral: 'text-neutral-400',
+    amber: 'text-amber-500',
+    yellow: 'text-yellow-500',
+    blue: 'text-blue-400',
+    red: 'text-red-400',
+  };
+
+  return (
+    <div className={`rounded-3xl border overflow-hidden transition-all duration-300 ${colors[color]} ${isOpen ? 'shadow-2xl' : 'shadow-lg mb-2'}`}>
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className={`font-black text-sm uppercase tracking-widest ${textColors[color]}`}>{title}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="bg-neutral-950/50 border border-neutral-700/50 text-white text-xs font-black px-2 py-1 rounded-lg min-w-[32px] text-center">{count}</span>
+          <ChevronDown size={20} className={`transition-transform duration-300 text-neutral-500 ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+      
+      <div className={`transition-all duration-300 ease-in-out ${isOpen ? 'max-h-[2000px] opacity-100 p-4 pt-0' : 'max-h-0 opacity-0 overflow-hidden'}`}>
+        {children}
+      </div>
     </div>
   );
 }

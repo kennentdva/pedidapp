@@ -239,7 +239,10 @@ export default function Cocina() {
 
   const totalSopas = pedidos.reduce((acc, p) => { 
     if (p.estado_cocina === 'empacado') return acc;
-    getItems(p).forEach(it => { if (it?.sopa && !it.completado) acc += (it.cantidad || 1); }); 
+    getItems(p).forEach(it => { 
+      // Si tiene sopa definida explícitamente o si es un plato de "Solo Sopa"
+      if ((it?.sopa || it?.proteina === 'Solo Sopa') && !it.completado) acc += (it.cantidad || 1); 
+    }); 
     return acc; 
   }, 0);
 

@@ -70,6 +70,12 @@ export type MenuConfig = {
   narratorInterval?: number;
 };
 
+export type InventarioPortas = {
+  grande: number;
+  pequeno: number;
+  sopa: number;
+};
+
 interface OrderState {
   responsable: Cliente | null;
   beneficiario: string;
@@ -100,6 +106,10 @@ interface OrderState {
   editingPedidoId: string | null;
   setEditingPedidoId: (id: string | null) => void;
   saldarDeudaCompleta: (clienteId: string, monto: number) => Promise<void>;
+
+  inventarioPortas: InventarioPortas;
+  fetchInventarioPortas: () => Promise<void>;
+  updateInventarioPortas: (modificaciones: Partial<InventarioPortas>) => Promise<void>;
 }
 
 const initialState = {
@@ -117,6 +127,7 @@ const initialState = {
   valorBase: 0,
   precioManual: false,
   editingPedidoId: null,
+  inventarioPortas: { grande: 0, pequeno: 0, sopa: 0 },
 };
 
 const defaultMenuConfig: MenuConfig = {
@@ -198,6 +209,7 @@ const calcularPrecio = (proteina: string | null, sopa: string | null, acompanami
 };
 
 export const MENU_CONFIG_ID = '66666666-6666-6666-6666-666666666666';
+export const INVENTORY_PORTAS_ID = '88888888-8888-8888-8888-888888888888';
 
 export const useOrderStore = create<OrderState>((set, get) => ({
   ...initialState,
@@ -372,6 +384,40 @@ export const useOrderStore = create<OrderState>((set, get) => ({
     await supabase.from('clientes').upsert([{ 
        id: MENU_CONFIG_ID, 
        nombre: JSON.stringify(newConfig), 
+       es_frecuente: false 
+    }]);
+  },
+
+  fetchInventarioPortas: async () => {
+    const { data } = await supabase.from('clientes').select('nombre').eq('id', INVENTORY_PORTAS_ID).single();
+    if (data && data.nombre) {
+      try {
+         const parsed = JSON.parse(data.nombre);
+         if (parsed) {
+            set({ inventarioPortas: { ...get().inventarioPortas, ...parsed } });
+         }
+      } catch(e) { console.error("Error parsing inventory", e); }
+    }
+  },
+
+  updateInventarioPortas: async (modificaciones) => {
+    const state = get();
+    // Validar para evitar NaN (por si acaso)
+    const newInv = {
+       grande: isNaN(modificaciones.grande as any) ? state.inventarioPortas.grande : (modificaciones.grande ?? state.inventarioPortas.grande),
+       pequeno: isNaN(modificaciones.pequeno as any) ? state.inventarioPortas.pequeno : (modificaciones.pequeno ?? state.inventarioPortas.pequeno),
+       sopa: isNaN(modificaciones.sopa as any) ? state.inventarioPortas.sopa : (modificaciones.sopa ?? state.inventarioPortas.sopa),
+    };
+    
+    // Only update if there is a change to avoid unnecessary network
+    if (newInv.grande === state.inventarioPortas.grande && newInv.pequeno === state.inventarioPortas.pequeno && newInv.sopa === state.inventarioPortas.sopa) {
+      return;
+    }
+    
+    set({ inventarioPortas: newInv });
+    await supabase.from('clientes').upsert([{ 
+       id: INVENTORY_PORTAS_ID, 
+       nombre: JSON.stringify(newInv), 
        es_frecuente: false 
     }]);
   },
