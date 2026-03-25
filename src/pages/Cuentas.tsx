@@ -32,6 +32,10 @@ export default function Cuentas() {
   const [savingPayment, setSavingPayment] = useState(false);
   const [mostrarArchivados, setMostrarArchivados] = useState(false);
 
+  // Filtros de fecha
+  const [fechaFiltroInicio, setFechaFiltroInicio] = useState('');
+  const [fechaFiltroFin, setFechaFiltroFin] = useState('');
+
   // Formulario Deuda Histórica
   const [mostrarHistorico, setMostrarHistorico] = useState(false);
   const [histFecha, setHistFecha] = useState(new Date().toISOString().split('T')[0]);
@@ -185,9 +189,28 @@ export default function Cuentas() {
 
   const { pedidosLedger, abonosDisponibles, pagosLedger } = computeLedger();
 
+  const isDateInRange = (dateStr: string) => {
+     if (!fechaFiltroInicio && !fechaFiltroFin) return true;
+     const d = new Date(dateStr).getTime();
+     const start = fechaFiltroInicio ? new Date(fechaFiltroInicio + 'T00:00:00').getTime() : 0;
+     const end = fechaFiltroFin ? new Date(fechaFiltroFin + 'T23:59:59').getTime() : Infinity;
+     return d >= start && d <= end;
+  };
+
+  const pedidosLedgerFiltered = pedidosLedger.filter(p => isDateInRange(p.created_at || ''));
+  const pagosLedgerFiltered = pagosLedger.filter(p => isDateInRange(p.fecha || ''));
+
+  const isFiltered = fechaFiltroInicio !== '' || fechaFiltroFin !== '';
+
   const calcularDeudaTotal = () => {
     const sumConsumo = historialPedidos.reduce((acc, p) => acc + p.valor, 0);
     const sumAbonos = pagosRealizados.reduce((acc, p) => acc + p.monto, 0);
+    return Math.max(0, sumConsumo - sumAbonos);
+  };
+
+  const calcularDeudaFiltrada = () => {
+    const sumConsumo = pedidosLedgerFiltered.reduce((acc, p) => acc + p.valor, 0);
+    const sumAbonos = pagosLedgerFiltered.reduce((acc, p) => acc + p.monto, 0);
     return Math.max(0, sumConsumo - sumAbonos);
   };
 
@@ -557,18 +580,15 @@ export default function Cuentas() {
   const generarReporteText = () => {
     if (!selectedCliente || historialPedidos.length === 0) return;
     
-    // El total consumido menos lo pagado
-    const deuda = calcularDeudaTotal();
-    if (deuda <= 0) return alert('Este cliente no tiene deudas pendientes.');
+    const deuda = isFiltered ? calcularDeudaFiltrada() : calcularDeudaTotal();
+    const textoDeuda = isFiltered ? 'TOTAL DEL PERIODO' : 'TOTAL DEUDA';
+    
+    if (deuda <= 0) return alert('No hay deuda pendiente reportable en este momento.');
     
     let texto = `*Restaurante Mayiya*\n\nHola ${(selectedCliente.nombre || 'Cliente').trim()}, te compartimos tu estado de cuenta a la fecha.\n\n`;
     
-    // Solo mostrar los pedidos que sumados superan el monto pagado (desde los más recientes hacia atrás)
-    // O de forma más simple según el usuario: Solo mostrar los que no están marcados como pagados formalmente.
-    // Pero como ahora es por abonos, mostraremos los pedidos pendientes de saldar.
-    
-    const pedidosPendientes = mostrarArchivados ? pedidosLedger : pedidosLedger.filter(p => !p.calcPagado);
-    const abonosGenerales = mostrarArchivados ? pagosLedger : pagosLedger.filter(p => !p.calcArchivado);
+    const pedidosPendientes = mostrarArchivados ? pedidosLedgerFiltered : pedidosLedgerFiltered.filter(p => !p.calcPagado);
+    const abonosGenerales = mostrarArchivados ? pagosLedgerFiltered : [];
 
     pedidosPendientes.forEach(p => {
       const d = new Date(p.created_at || '');
@@ -602,7 +622,7 @@ export default function Cuentas() {
       });
     }
     
-    texto += `\n*TOTAL DEUDA: $${deuda.toLocaleString()}*\n\nSi deseas transferir, puedes hacerlo a:\nNequi: 3044118649\n(Esta misma llave sirve si transfieres desde otro banco)`;
+    texto += `\n*${textoDeuda}: $${deuda.toLocaleString()}*\n\nSi deseas transferir, puedes hacerlo a:\nNequi: 3044118649\n(Esta misma llave sirve si transfieres desde otro banco)`;
     
     return texto;
   };
@@ -701,7 +721,8 @@ export default function Cuentas() {
   const generarReporteIndividualPDF = () => {
     if (!selectedCliente || historialPedidos.length === 0) return;
     
-    const deuda = calcularDeudaTotal();
+    const deuda = isFiltered ? calcularDeudaFiltrada() : calcularDeudaTotal();
+    const textoDeuda = isFiltered ? 'TOTAL DEL PERIODO' : 'TOTAL DEUDA NETA';
     
     const doc = new jsPDF();
     doc.setFontSize(18);
@@ -711,7 +732,7 @@ export default function Cuentas() {
     doc.setTextColor(100);
     doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`, 14, 30);
     
-    const pedidosPendientes = mostrarArchivados ? pedidosLedger : pedidosLedger.filter(p => !p.calcPagado);
+    const pedidosPendientes = mostrarArchivados ? pedidosLedgerFiltered : pedidosLedgerFiltered.filter(p => !p.calcPagado);
     const tablaConsumos = pedidosPendientes.map(p => {
        const d = new Date(p.created_at || '').toLocaleDateString();
        let detalleStr = p.detalle?.proteina || '';
@@ -747,7 +768,7 @@ export default function Cuentas() {
       finalY = (doc as any).lastAutoTable.finalY + 10;
     }
 
-    const abonosGenerales = mostrarArchivados ? pagosLedger : pagosLedger.filter(p => !p.calcArchivado);
+    const abonosGenerales = mostrarArchivados ? pagosLedgerFiltered : [];
     const tablaAbonos = abonosGenerales.map(pago => [
        new Date(pago.fecha || new Date()).toLocaleDateString(),
        pago.metodo,
@@ -771,7 +792,7 @@ export default function Cuentas() {
 
     doc.setFontSize(16);
     doc.setTextColor(220, 38, 38);
-    doc.text(`TOTAL DEUDA NETA: $${deuda.toLocaleString()}`, 14, finalY + 5);
+    doc.text(`${textoDeuda}: $${deuda.toLocaleString()}`, 14, finalY + 5);
 
     doc.save(`Estado_Cuenta_${(selectedCliente.nombre || 'Sin_Nombre').trim().replace(/\s/g, '_')}.pdf`);
   };
@@ -1022,16 +1043,25 @@ export default function Cuentas() {
                </div>
              )}
 
-             <div className="flex justify-between items-center mb-4 mt-8 pb-2 border-b border-neutral-800">
+             <div className="flex justify-between items-center mb-4 mt-8 pb-2 border-b border-neutral-800 flex-wrap gap-4">
                <div>
                  <h3 className="text-lg font-bold text-neutral-400">Historial y Detalles de Consumo</h3>
-                 <label className="flex items-center gap-2 mt-2 cursor-pointer text-xs text-neutral-500 hover:text-white transition-colors">
+                 <label className="flex items-center gap-2 mt-2 cursor-pointer text-xs text-neutral-500 hover:text-white transition-colors w-fit">
                     <input type="checkbox" checked={mostrarArchivados} onChange={e => setMostrarArchivados(e.target.checked)} className="rounded border-neutral-700 bg-neutral-900 text-blue-500 focus:ring-blue-500 focus:ring-offset-neutral-900" />
                     Mostrar historial archivado (pagados)
                  </label>
                </div>
-               {deudaVisible > 0 && (
-                 <div className="flex flex-wrap gap-2 justify-end mt-2 md:mt-0">
+               
+               <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2 border border-neutral-800 bg-neutral-900 px-3 py-1.5 rounded-xl">
+                     <span className="text-[10px] uppercase font-bold text-neutral-500 tracking-widest">Desde</span>
+                     <input type="date" className="bg-transparent text-sm text-neutral-300 outline-none w-[110px]" value={fechaFiltroInicio} onChange={e => setFechaFiltroInicio(e.target.value)} />
+                     <span className="text-[10px] uppercase font-bold text-neutral-500 tracking-widest pl-2 border-l border-neutral-800">Hasta</span>
+                     <input type="date" className="bg-transparent text-sm text-neutral-300 outline-none w-[110px]" value={fechaFiltroFin} onChange={e => setFechaFiltroFin(e.target.value)} />
+                  </div>
+
+                 {(deudaVisible > 0 || isFiltered) && (
+                 <div className="flex flex-wrap gap-2">
                    <button onClick={generarReporteIndividualPDF} className="flex items-center gap-2 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded-lg transition-colors" title="Descargar como PDF">
                      <Download size={14}/> PDF
                    </button>
@@ -1042,7 +1072,8 @@ export default function Cuentas() {
                      <Share2 size={14}/> Copiar
                    </button>
                  </div>
-               )}
+                 )}
+               </div>
              </div>
              
              {loading ? (
@@ -1052,7 +1083,7 @@ export default function Cuentas() {
                 {/* Lista de Pedidos (Debe / Consumo) */}
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Consumo Individual</h4>
-                   {pedidosLedger.filter(p => mostrarArchivados ? true : !p.calcPagado).map(p => {
+                   {pedidosLedgerFiltered.filter(p => mostrarArchivados ? true : !p.calcPagado).map(p => {
                      const d = new Date(p.created_at || '');
                      return (
                        <div key={p.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-4 rounded-2xl relative overflow-hidden">
@@ -1135,38 +1166,40 @@ export default function Cuentas() {
                    )}
                 </div>
 
-                {/* Lista de Abonos (Ya Pagado / Entradas) */}
-                <div className="space-y-3">
-                   <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Historial de Abonos / Pagos</h4>
-                   {pagosLedger.filter(p => mostrarArchivados ? true : !p.calcArchivado).map(pago => {
-                     const d = new Date(pago.fecha || new Date());
-                     return (
-                        <div key={pago.id} className={`p-4 rounded-2xl flex justify-between items-center group border ${pago.calcArchivado ? 'bg-neutral-900 border-neutral-800 opacity-60' : 'bg-emerald-950/10 border-emerald-900/30'}`}>
-                          <div>
-                            <p className={`${pago.calcArchivado ? 'text-neutral-500' : 'text-emerald-400'} font-black text-lg`}>+ ${pago.monto.toLocaleString()}</p>
-                            <p className="text-[10px] text-neutral-500 uppercase font-bold">{pago.metodo} • {d.toLocaleDateString()}</p>
-                          </div>
-                          <div className="flex gap-2">
-                             <button 
-                                onClick={() => setAbonoToDelete({ id: (pago as any).id!, monto: (pago as any).monto, metodo: (pago as any).metodo })} 
-                                className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
-                                title="Eliminar abono"
-                             >
-                                <Trash2 size={16}/>
-                             </button>
-                             <div className={`p-2 rounded-lg ${pago.calcArchivado ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                                <TrendingDown size={16} className="rotate-180"/>
-                             </div>
-                          </div>
-                       </div>
-                     )
-                   })}
-                   {pagosLedger.filter(p => mostrarArchivados ? true : !p.calcArchivado).length === 0 && (
-                      <div className="text-center py-12 text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
-                         No se han registrado abonos recientes.
-                      </div>
-                   )}
-                </div>
+                {/* Lista de Abonos (Ya Pagado / Entradas) - Solo visible si se activa mostrar archivo */}
+                 {mostrarArchivados && (
+                  <div className="space-y-3">
+                     <h4 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-4">Historial de Abonos / Pagos</h4>
+                     {pagosLedgerFiltered.map(pago => {
+                       const d = new Date(pago.fecha || new Date());
+                       return (
+                          <div key={pago.id} className={`p-4 rounded-2xl flex justify-between items-center group border ${pago.calcArchivado ? 'bg-neutral-900 border-neutral-800 opacity-60' : 'bg-emerald-950/10 border-emerald-900/30'}`}>
+                            <div>
+                              <p className={`${pago.calcArchivado ? 'text-neutral-500' : 'text-emerald-400'} font-black text-lg`}>+ ${pago.monto.toLocaleString()}</p>
+                              <p className="text-[10px] text-neutral-500 uppercase font-bold">{pago.metodo} • {d.toLocaleDateString()}</p>
+                            </div>
+                            <div className="flex gap-2">
+                               <button 
+                                  onClick={() => setAbonoToDelete({ id: (pago as any).id!, monto: (pago as any).monto, metodo: (pago as any).metodo })} 
+                                  className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/20"
+                                  title="Eliminar abono"
+                               >
+                                  <Trash2 size={16}/>
+                               </button>
+                               <div className={`p-2 rounded-lg ${pago.calcArchivado ? 'bg-neutral-800 text-neutral-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                  <TrendingDown size={16} className="rotate-180"/>
+                               </div>
+                            </div>
+                         </div>
+                       )
+                     })}
+                     {pagosLedgerFiltered.length === 0 && (
+                        <div className="text-center py-12 text-neutral-500 border-2 border-dashed border-neutral-800 rounded-2xl">
+                           No se han registrado abonos recientes.
+                        </div>
+                     )}
+                  </div>
+                 )}
               </div>
              )}
           </div>

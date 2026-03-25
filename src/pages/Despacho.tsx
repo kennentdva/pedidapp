@@ -459,21 +459,50 @@ export default function Despacho() {
           <div><h2 className="text-2xl font-bold">Despacho</h2><p className="text-neutral-400 text-sm">Control de entregas</p></div>
         </div>
         <div className="flex items-center gap-3 bg-neutral-900 border border-neutral-800 p-2 rounded-2xl">
-          <button 
-            onClick={() => {
-              setInvGrandeStr(String(inventario.grande));
-              setInvPequenoStr(String(inventario.pequeno));
-              setInvSopaStr(String(inventario.sopa));
-              setShowInvModal(true);
-            }} 
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-              (inventario.grande < 50 || inventario.pequeno < 50 || inventario.sopa < 50) 
-              ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse' 
-              : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300'
-            }`}
-          >
-            📦 Portas
-          </button>
+          <div className="flex gap-2 mr-2">
+            <button 
+              onClick={() => {
+                setInvGrandeStr(String(inventario.grande));
+                setInvPequenoStr(String(inventario.pequeno));
+                setInvSopaStr(String(inventario.sopa));
+                setShowInvModal(true);
+              }} 
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                inventario.grande < 50 ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse' : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300'
+              }`}
+              title="Portas Grandes (Proteínas y Arroz Grande)"
+            >
+              🍱 Gran: {inventario.grande}
+            </button>
+            <button 
+              onClick={() => {
+                setInvGrandeStr(String(inventario.grande));
+                setInvPequenoStr(String(inventario.pequeno));
+                setInvSopaStr(String(inventario.sopa));
+                setShowInvModal(true);
+              }} 
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                inventario.pequeno < 50 ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse' : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300'
+              }`}
+              title="Portas Pequeños (Arroz pequeño y Solo sopa con arroz)"
+            >
+              🥡 Peq: {inventario.pequeno}
+            </button>
+            <button 
+              onClick={() => {
+                setInvGrandeStr(String(inventario.grande));
+                setInvPequenoStr(String(inventario.pequeno));
+                setInvSopaStr(String(inventario.sopa));
+                setShowInvModal(true);
+              }} 
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                inventario.sopa < 50 ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse' : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300'
+              }`}
+              title="Portas Sopa (Cualquier tipo de sopa)"
+            >
+              🥣 Sop: {inventario.sopa}
+            </button>
+          </div>
           
           <div className="relative">
             <Search size={16} className="absolute left-3 top-2.5 text-neutral-500" />
